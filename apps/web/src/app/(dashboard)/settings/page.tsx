@@ -3,6 +3,8 @@ import { Input } from '@geo-command/ui/components/input'
 import { Label } from '@geo-command/ui/components/label'
 import { Button } from '@geo-command/ui/components/button'
 
+export const dynamic = 'force-dynamic'
+
 export default function SettingsPage() {
   return (
     <div className="space-y-6">

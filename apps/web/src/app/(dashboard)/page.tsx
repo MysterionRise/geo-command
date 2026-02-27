@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@geo-command/ui/components/card'
 
+export const dynamic = 'force-dynamic'
+
 export default function DashboardPage() {
   return (
     <div className="space-y-6">

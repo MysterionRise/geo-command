@@ -11,20 +11,30 @@ export const metadata: Metadata = {
   description: 'Multi-tenant workspace management platform',
 }
 
+function Providers({ children }: { children: React.ReactNode }) {
+  const content = (
+    <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
+      {children}
+    </ThemeProvider>
+  )
+
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    return content
+  }
+
+  return <ClerkProvider>{content}</ClerkProvider>
+}
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   return (
-    <ClerkProvider>
-      <html lang="en" suppressHydrationWarning>
-        <body className={inter.className}>
-          <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
-            {children}
-          </ThemeProvider>
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="en" suppressHydrationWarning>
+      <body className={inter.className}>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
   )
 }

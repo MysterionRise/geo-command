@@ -1,11 +1,16 @@
 'use client'
 
+import dynamic from 'next/dynamic'
 import { usePathname } from 'next/navigation'
-import { UserButton } from '@clerk/nextjs'
 import { Sidebar } from '@geo-command/ui/components/sidebar'
 import { OrgSwitcher } from '@geo-command/ui/components/org-switcher'
 import { ThemeToggle } from '@geo-command/ui/components/theme-toggle'
 import { useTheme } from 'next-themes'
+
+const UserButton = dynamic(
+  () => import('@clerk/nextjs').then((mod) => mod.UserButton),
+  { ssr: false },
+)
 
 export default function DashboardLayout({
   children,

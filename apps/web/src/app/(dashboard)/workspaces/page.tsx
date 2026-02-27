@@ -2,6 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@geo-command/ui/compon
 import { Button } from '@geo-command/ui/components/button'
 import { FolderOpen, Plus } from 'lucide-react'
 
+export const dynamic = 'force-dynamic'
+
 export default function WorkspacesPage() {
   return (
     <div className="space-y-6">

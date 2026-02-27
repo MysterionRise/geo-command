@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic'
+
 export default function MonitoringPage() {
   return (
     <div className="space-y-6">
