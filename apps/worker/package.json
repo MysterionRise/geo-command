@@ -1,0 +1,22 @@
+{
+  "name": "@geo-command/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm"
+  },
+  "dependencies": {
+    "@geo-command/ai": "workspace:*",
+    "@geo-command/db": "workspace:*",
+    "@geo-command/queue": "workspace:*",
+    "bullmq": "^5.30.1"
+  },
+  "devDependencies": {
+    "@geo-command/config": "workspace:*",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

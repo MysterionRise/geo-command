@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./api": "./src/api/index.ts",
-    "./enums": "./src/enums.ts"
+    "./enums": "./src/enums.ts",
+    "./plan-limits": "./src/plan-limits.ts"
   },
   "dependencies": {
     "zod": "^3.24.1"

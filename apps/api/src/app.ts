@@ -8,6 +8,9 @@ import { orgContext } from './middleware/org-context.js'
 import { organisations } from './routes/organisations.js'
 import { users } from './routes/users.js'
 import { webhooks } from './routes/webhooks.js'
+import { engines } from './routes/engines.js'
+import { projects } from './routes/projects.js'
+import { prompts } from './routes/prompts.js'
 import { apiError } from './helpers.js'
 
 type Variables = {
@@ -36,6 +39,15 @@ app.use('/api/*', orgContext)
 // Route handlers
 app.route('/api/organisations', organisations)
 app.route('/api/users', users)
+app.route('/api/engines', engines)
+app.route(
+  '/api/organisations/:orgId/workspaces/:wsId/projects',
+  projects,
+)
+app.route(
+  '/api/organisations/:orgId/workspaces/:wsId/projects/:projectId/prompts',
+  prompts,
+)
 
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }))

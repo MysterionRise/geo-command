@@ -9,6 +9,9 @@ export const PlanEnum = z.enum([
 ])
 export type Plan = z.infer<typeof PlanEnum>
 
+export const PromptStatusEnum = z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED'])
+export type PromptStatus = z.infer<typeof PromptStatusEnum>
+
 export const RoleEnum = z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER'])
 export type Role = z.infer<typeof RoleEnum>
 

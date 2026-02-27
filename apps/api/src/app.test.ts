@@ -77,6 +77,15 @@ vi.mock('@upstash/redis', () => ({
   Redis: vi.fn(),
 }))
 
+vi.mock('@geo-command/ai', () => ({
+  PromptGenerator: class {},
+}))
+
+vi.mock('@geo-command/queue', () => ({
+  embeddingQueue: { add: vi.fn() },
+  clusteringQueue: { add: vi.fn() },
+}))
+
 const { prisma } = await import('@geo-command/db')
 
 beforeEach(() => {

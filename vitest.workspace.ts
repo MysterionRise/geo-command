@@ -29,4 +29,11 @@ export default defineWorkspace([
       include: ['src/**/*.test.ts'],
     },
   },
+  {
+    test: {
+      name: 'ai',
+      root: './packages/ai',
+      include: ['src/**/*.test.ts'],
+    },
+  },
 ])

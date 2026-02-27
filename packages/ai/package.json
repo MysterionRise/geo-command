@@ -1,0 +1,26 @@
+{
+  "name": "@geo-command/ai",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./prompt-generator": "./src/prompt-generator.ts",
+    "./embedding": "./src/embedding-service.ts",
+    "./clustering": "./src/clustering-service.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "openai": "^4.77.0",
+    "ml-kmeans": "^6.0.0"
+  },
+  "devDependencies": {
+    "@geo-command/config": "workspace:*",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

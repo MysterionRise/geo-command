@@ -7,6 +7,7 @@ import {
   Settings,
   FolderOpen,
   Users,
+  Briefcase,
   ChevronLeft,
   ChevronRight,
   type LucideIcon,
@@ -42,6 +43,7 @@ const mainNavGroups: NavGroup[] = [
   {
     items: [
       { icon: FolderOpen, label: 'Workspaces', href: '/workspaces' },
+      { icon: Briefcase, label: 'Projects', href: '/projects' },
       { icon: Users, label: 'Team', href: '/team' },
     ],
   },

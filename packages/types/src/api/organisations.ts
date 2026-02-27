@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { PlanEnum } from '../enums.js'
+import { PlanEnum } from '../enums'
 
 export const CreateOrganisationSchema = z.object({
   name: z.string().min(1).max(100),

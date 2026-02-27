@@ -88,6 +88,89 @@ export function tenantDb(orgId: string) {
         }),
     },
 
+    project: {
+      findMany: (args?: Parameters<typeof prisma.project.findMany>[0]) =>
+        prisma.project.findMany({
+          ...args,
+          where: { ...args?.where, workspace: { orgId } },
+        }),
+      findFirst: (args?: Parameters<typeof prisma.project.findFirst>[0]) =>
+        prisma.project.findFirst({
+          ...args,
+          where: { ...args?.where, workspace: { orgId } },
+        }),
+      findUnique: (args: Parameters<typeof prisma.project.findUnique>[0]) =>
+        prisma.project.findUnique(args),
+      create: (args: Parameters<typeof prisma.project.create>[0]) =>
+        prisma.project.create(args),
+      update: (args: Parameters<typeof prisma.project.update>[0]) =>
+        prisma.project.update(args),
+      delete: (args: Parameters<typeof prisma.project.delete>[0]) =>
+        prisma.project.delete(args),
+      count: (args?: Parameters<typeof prisma.project.count>[0]) =>
+        prisma.project.count({
+          ...args,
+          where: { ...args?.where, workspace: { orgId } },
+        }),
+    },
+
+    prompt: {
+      findMany: (args?: Parameters<typeof prisma.prompt.findMany>[0]) =>
+        prisma.prompt.findMany({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+      findFirst: (args?: Parameters<typeof prisma.prompt.findFirst>[0]) =>
+        prisma.prompt.findFirst({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+      findUnique: (args: Parameters<typeof prisma.prompt.findUnique>[0]) =>
+        prisma.prompt.findUnique(args),
+      create: (args: Parameters<typeof prisma.prompt.create>[0]) =>
+        prisma.prompt.create(args),
+      update: (args: Parameters<typeof prisma.prompt.update>[0]) =>
+        prisma.prompt.update(args),
+      delete: (args: Parameters<typeof prisma.prompt.delete>[0]) =>
+        prisma.prompt.delete(args),
+      count: (args?: Parameters<typeof prisma.prompt.count>[0]) =>
+        prisma.prompt.count({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+    },
+
+    promptCluster: {
+      findMany: (
+        args?: Parameters<typeof prisma.promptCluster.findMany>[0],
+      ) =>
+        prisma.promptCluster.findMany({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+      findFirst: (
+        args?: Parameters<typeof prisma.promptCluster.findFirst>[0],
+      ) =>
+        prisma.promptCluster.findFirst({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+      findUnique: (
+        args: Parameters<typeof prisma.promptCluster.findUnique>[0],
+      ) => prisma.promptCluster.findUnique(args),
+      create: (args: Parameters<typeof prisma.promptCluster.create>[0]) =>
+        prisma.promptCluster.create(args),
+      update: (args: Parameters<typeof prisma.promptCluster.update>[0]) =>
+        prisma.promptCluster.update(args),
+      delete: (args: Parameters<typeof prisma.promptCluster.delete>[0]) =>
+        prisma.promptCluster.delete(args),
+      count: (args?: Parameters<typeof prisma.promptCluster.count>[0]) =>
+        prisma.promptCluster.count({
+          ...args,
+          where: { ...args?.where, project: { workspace: { orgId } } },
+        }),
+    },
+
     organisation: {
       findUnique: () =>
         prisma.organisation.findUnique({ where: { id: orgId } }),
