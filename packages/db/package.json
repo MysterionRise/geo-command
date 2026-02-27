@@ -1,0 +1,24 @@
+{
+  "name": "@geo-command/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tenant": "./src/tenant.ts"
+  },
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "prisma": "^6.1.0",
+    "@prisma/client": "^6.1.0"
+  },
+  "devDependencies": {
+    "@geo-command/config": "workspace:*",
+    "typescript": "^5.7.2"
+  }
+}

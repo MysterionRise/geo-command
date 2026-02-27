@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  AGENCY
+  ENTERPRISE
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Organisation {
+  id               String       @id @default(cuid())
+  name             String
+  slug             String       @unique
+  plan             Plan         @default(FREE)
+  stripeCustomerId String?      @unique
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  users            User[]
+  workspaces       Workspace[]
+  invitations      Invitation[]
+}
+
+model User {
+  id        String       @id @default(cuid())
+  clerkId   String       @unique
+  email     String       @unique
+  name      String?
+  role      Role         @default(MEMBER)
+  orgId     String
+  org       Organisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@index([orgId])
+  @@index([clerkId])
+}
+
+model Workspace {
+  id        String       @id @default(cuid())
+  name      String
+  slug      String
+  orgId     String
+  org       Organisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([orgId, slug])
+  @@index([orgId])
+}
+
+model Invitation {
+  id         String       @id @default(cuid())
+  email      String
+  role       Role         @default(MEMBER)
+  orgId      String
+  org        Organisation @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  token      String       @unique @default(cuid())
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@index([orgId])
+  @@index([token])
+  @@index([email, orgId])
+}

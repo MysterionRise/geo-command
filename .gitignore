@@ -1,3 +1,28 @@
-/venv/
-.idea
-__pycache__
+# dependencies
+node_modules/
+
+# build outputs
+dist/
+.next/
+.turbo/
+
+# generated
+generated/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# testing
+coverage/
+playwright-report/
+test-results/
+
+# misc
+.DS_Store
+*.tsbuildinfo
+
+# ide
+.idea/
+.vscode/
