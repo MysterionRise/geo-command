@@ -60,6 +60,8 @@ export interface AuthorizedOperatorRun {
   readonly registerVersion: string;
   readonly registerHash: string;
   readonly entryId: string;
+  readonly authorizationValidFrom: string;
+  readonly authorizationValidThrough: string | null;
 }
 
 export class OperatorAuthorizationError extends Error {
@@ -68,6 +70,10 @@ export class OperatorAuthorizationError extends Error {
     this.name = "OperatorAuthorizationError";
   }
 }
+
+const issuedRuns = new WeakSet<object>();
+export const isIssuedOperatorRun = (value: unknown): value is AuthorizedOperatorRun =>
+  value !== null && typeof value === "object" && issuedRuns.has(value);
 
 const fail = (message: string): never => {
   throw new OperatorAuthorizationError(message);
@@ -249,7 +255,7 @@ export const authorizeOperatorRun = (
   const { receiptTime, observationTime, githubDate } = validateTimes(input);
   const { entry, registerVersion, registerHash } = bindEntry(input, receiptTime);
   const { operatorName, osIdentity } = validateRunIdentity(input, entry);
-  return Object.freeze({
+  const authorized = Object.freeze({
     operatorName,
     osIdentity,
     repository: input.repository,
@@ -261,5 +267,9 @@ export const authorizeOperatorRun = (
     registerVersion,
     registerHash,
     entryId: entry.entryId,
+    authorizationValidFrom: entry.validFrom,
+    authorizationValidThrough: entry.validThrough ?? null,
   });
+  issuedRuns.add(authorized);
+  return authorized;
 };

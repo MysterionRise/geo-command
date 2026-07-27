@@ -28,6 +28,10 @@ export interface GitHubTransportOptions {
   readonly now?: () => number;
   readonly token?: string;
 }
+export interface GitHubResponseReceipt {
+  readonly data: unknown;
+  readonly responseDate: string;
+}
 
 const transportFailure = (code: string): never => {
   throw new GitHubTransportError(code);
@@ -37,6 +41,15 @@ const positiveInteger = (value: string | null): number | undefined => {
   if (value === null || !/^[1-9]\d*$/u.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) ? parsed : undefined;
+};
+const IMF_FIXDATE =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
+const deepFreeze = <Value>(value: Value): Value => {
+  if (value !== null && typeof value === "object") {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
 };
 
 export class BoundedGitHubTransport {
@@ -54,6 +67,21 @@ export class BoundedGitHubTransport {
   }
 
   public async requestJson(endpoint: GitHubEndpoint): Promise<unknown> {
+    return (await this.#request(endpoint, false)).data;
+  }
+
+  public async requestReceipt(endpoint: GitHubEndpoint): Promise<GitHubResponseReceipt> {
+    const receipt = await this.#request(endpoint, true);
+    return deepFreeze({
+      data: receipt.data,
+      responseDate: receipt.responseDate ?? transportFailure("RESPONSE_DATE_REJECTED"),
+    });
+  }
+
+  async #request(
+    endpoint: GitHubEndpoint,
+    requireResponseDate: boolean,
+  ): Promise<{ readonly data: unknown; readonly responseDate?: string }> {
     let validatedEndpoint: GitHubEndpoint;
     try {
       validatedEndpoint = validateGitHubEndpoint(endpoint);
@@ -72,7 +100,9 @@ export class BoundedGitHubTransport {
     try {
       const response = await this.#send(validatedEndpoint, abortController.signal);
       this.#validateResponse(response);
-      return await this.#parseJson(response);
+      const responseDate = requireResponseDate ? this.#responseDate(response) : undefined;
+      const data = await this.#parseJson(response);
+      return responseDate === undefined ? { data } : { data, responseDate };
     } catch (error) {
       if (abortController.signal.aborted) return transportFailure("TRANSPORT_FAILURE");
       if (error instanceof GitHubTransportError || error instanceof GitHubRateLimitPause) {
@@ -83,6 +113,15 @@ export class BoundedGitHubTransport {
       clearTimeout(timeout);
       this.#activeRequests -= 1;
     }
+  }
+
+  #responseDate(response: Response): string {
+    const value = response.headers.get("date");
+    if (value === null || !IMF_FIXDATE.test(value)
+      || Number.isNaN(Date.parse(value)) || new Date(value).toUTCString() !== value) {
+      return transportFailure("RESPONSE_DATE_REJECTED");
+    }
+    return value;
   }
 
   async #send(endpoint: GitHubEndpoint, signal: AbortSignal): Promise<Response> {

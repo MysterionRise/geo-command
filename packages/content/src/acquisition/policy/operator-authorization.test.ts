@@ -97,6 +97,8 @@ describe("operator authorization and authoritative time", () => {
       registerVersion: "operator-authorizations-v1",
       registerHash: canonicalSha256(createInput().register),
       entryId: "operator-fixture-v1",
+      authorizationValidFrom: "2026-07-27T15:00:00Z",
+      authorizationValidThrough: "2026-08-27T15:00:00Z",
     });
   });
 

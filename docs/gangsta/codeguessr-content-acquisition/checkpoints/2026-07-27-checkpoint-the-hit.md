@@ -2,10 +2,10 @@
 heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
-timestamp: 2026-07-27T18:35:38+01:00
-next-action: Dispatch the Secure Operator Operations work packages
-completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014]
-pending-wps: [WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023, WP-024, WP-025, WP-026, WP-027]
+timestamp: 2026-07-27T19:51:32+01:00
+next-action: Dispatch the Promotion and Game Adapters work packages
+completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017]
+pending-wps: [WP-018, WP-019, WP-020, WP-021, WP-022, WP-023, WP-024, WP-025, WP-026, WP-027]
 failed-wps: []
 artifacts:
   - tests/e2e/provenance-accessibility.spec.ts
@@ -14,13 +14,18 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/plans/2026-07-27-execution-plan.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-foundation-territory.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-github-core-territory.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-secure-operator-operations.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
   - packages/content/src/acquisition/github/
   - packages/content/src/acquisition/draft/
+  - packages/content/src/acquisition/storage/
+  - packages/content/src/acquisition/operator/
+  - packages/content/src/acquisition/index.ts
   - packages/domain/src/provenance/index.ts
   - ops/content/policies/
+  - ops/content/acquire/
 ---
 
 ## Resume Context
@@ -36,3 +41,7 @@ The operational policy and operator registers are intentionally non-effective. T
 Promotion of real drafts remains externally blocked until four independent qualified human reviewers are available; implementation may proceed to review-ready drafts and synthetic rehearsal coverage.
 
 The GitHub Acquisition Core territory is accepted after 101/101 focused tests and content-package typecheck. It provides strict immutable request, transport, traversal, checkpoint, screening, diff, marker, license, and non-publishable-draft boundaries. It remains inert until secure operator storage and command surfaces are accepted.
+
+The Secure Operator Operations territory is accepted after corrective independent audit and a fresh root sweep of 1,851/1,851 Vitest tests plus workspace TAP and full workspace/ops typecheck. External authenticated storage, authoritative lifecycle and verified deletion, a project-register-bound durable metadata-only audit sink, Node-only packaging, independently loaded project controls, actual host UID/clock preflight, bounded unauthenticated public transport, and an exact single-parent GitHub commit receipt are implemented.
+
+The operator command deliberately stops at `AUTHORIZED_COMMIT_RECEIPT`. WP-024 must connect that receipt to the already implemented traversal, checkpoint, screening, encrypted storage, audit, and draft boundaries and must pass the same project-authorized run/register binding to the durable audit sink. The current non-effective policies continue to block all live network use.

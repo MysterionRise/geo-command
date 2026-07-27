@@ -32,7 +32,13 @@ const endpoint = validateGitHubEndpoint(
   `https://api.github.com/repos/owner/repo/commits/${"a".repeat(40)}`,
 );
 const json = (value: unknown, init?: ResponseInit): Response =>
-  new Response(JSON.stringify(value), init);
+  new Response(JSON.stringify(value), {
+    ...init,
+    headers: {
+      date: "Mon, 27 Jul 2026 15:00:00 GMT",
+      ...Object.fromEntries(new Headers(init?.headers).entries()),
+    },
+  });
 
 describe("bounded GitHub transport", () => {
   it("uses one bounded manual-redirect GET and parses JSON", async () => {
@@ -52,7 +58,24 @@ describe("bounded GitHub transport", () => {
     expect(captured?.headers.get("authorization")).toBe("Bearer token-canary");
     expect(GITHUB_REQUEST_TIMEOUT_MS).toBe(15_000);
   });
-
+  it("returns only a deeply immutable payload and canonical response date", async () => {
+    const transport = new BoundedGitHubTransport({
+      fetch: async () => json({ sha: "a".repeat(40), parents: [{ sha: "b".repeat(40) }] }),
+    });
+    const receipt = await transport.requestReceipt(endpoint);
+    expect(receipt.responseDate).toBe("Mon, 27 Jul 2026 15:00:00 GMT");
+    expect(Object.isFrozen(receipt)).toBe(true);
+    expect(Object.isFrozen(receipt.data)).toBe(true);
+    expect(Object.isFrozen((receipt.data as { parents: unknown[] }).parents)).toBe(true);
+  });
+  it("rejects missing and malformed response dates", async () => {
+    for (const date of [undefined, "Invalid Date", "mon, 27 jul 2026 15:00:00 gmt"]) {
+      const headers = date === undefined ? undefined : { date };
+      await expect(new BoundedGitHubTransport({
+        fetch: async () => new Response("{}", headers === undefined ? {} : { headers }),
+      }).requestReceipt(endpoint)).rejects.toThrow("RESPONSE_DATE_REJECTED");
+    }
+  });
   it("rejects endpoints outside the exact allowlist before fetching", async () => {
     let calls = 0;
     const transport = new BoundedGitHubTransport({
@@ -62,7 +85,6 @@ describe("bounded GitHub transport", () => {
       .rejects.toThrow("ENDPOINT_REJECTED");
     expect(calls).toBe(0);
   });
-
   it("rejects redirects, malformed JSON, and transport failures without raw bodies", async () => {
     for (const response of [
       new Response("raw-secret-canary", { status: 302, headers: { location: "https://evil.test" } }),
