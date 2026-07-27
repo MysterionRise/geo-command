@@ -63,6 +63,7 @@ export interface ProjectOwnedHumanEvidenceRecord extends CommonEvidenceRecord {
   readonly sourceClass: "project-owned-human";
   readonly creationOrCommissionBasis: string;
   readonly recordedProjectAuthorization: string;
+  readonly noAgentParticipationAttestation?: string;
 }
 
 export type EvidenceRecord =
@@ -81,6 +82,10 @@ const MODEL = ["provider", "model", "generationDate", "promptProvenanceOrApprove
   "reviewerThirdPartyRightsDecision", "approvedPublicAttributionOrDisclosureText",
   "acquisitionOrReviewerDecision"] as const;
 const HUMAN = ["creationOrCommissionBasis", "recordedProjectAuthorization"] as const;
+const HUMAN_REVISION_7 = [
+  ...HUMAN,
+  "noAgentParticipationAttestation",
+] as const;
 function historical<T extends CommonEvidenceRecord>(
   input: unknown, expected: EvidenceSourceClass, fields: readonly string[],
 ): T {
@@ -107,7 +112,31 @@ export const parseModelOutputEvidenceRecord = (input: unknown): ModelOutputEvide
   historical(input, "model-output", MODEL);
 export const parseProjectOwnedHumanEvidenceRecord = (
   input: unknown,
-): ProjectOwnedHumanEvidenceRecord => historical(input, "project-owned-human", HUMAN);
+): ProjectOwnedHumanEvidenceRecord => {
+  const record = requireObject(input, "project-owned-human evidence record");
+  const fields = "noAgentParticipationAttestation" in record
+    ? HUMAN_REVISION_7
+    : HUMAN;
+  requireExact(record, [...COMMON_EVIDENCE_FIELDS, ...fields]);
+  const base = parseCommonEvidenceFields(record);
+  if (base.sourceClass !== "project-owned-human") {
+    throw new TypeError("sourceClass must be project-owned-human");
+  }
+  return Object.freeze({
+    ...base,
+    sourceClass: "project-owned-human",
+    creationOrCommissionBasis: requireText(record, "creationOrCommissionBasis"),
+    recordedProjectAuthorization: requireText(record, "recordedProjectAuthorization"),
+    ...("noAgentParticipationAttestation" in record
+      ? {
+          noAgentParticipationAttestation: requireText(
+            record,
+            "noAgentParticipationAttestation",
+          ),
+        }
+      : {}),
+  });
+};
 
 export function parseEvidenceRecord(input: unknown): EvidenceRecord {
   const record = requireObject(input, "evidence record");

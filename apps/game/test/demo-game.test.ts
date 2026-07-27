@@ -74,16 +74,21 @@ describe("playable synthetic demo", () => {
     const page = readFileSync(new URL("../src/app/page.tsx", import.meta.url), "utf8");
     const actions = readFileSync(new URL("../src/app/actions.ts", import.meta.url), "utf8");
     const mount = readFileSync(new URL("../src/demo/demo-arcade.tsx", import.meta.url), "utf8");
+    const rehearsal = readFileSync(
+      new URL("../src/demo/rehearsal-catalogue.ts", import.meta.url),
+      "utf8",
+    );
 
     expect(page).toContain("DemoArcade");
-    expect(page).toContain("DEMO_MODE");
-    expect(page).toContain("authorizeDemoReveal");
-    expect(page).toContain("Synthetic local demo");
+    expect(page).toContain("ACTIVE_REHEARSAL_CATALOGUE");
+    expect(page).toContain("authorizeRehearsalReveal");
+    expect(rehearsal).toContain("Synthetic local demo");
     expect(mount).toContain("ArcadeShell");
     expect(mount).toContain("dynamic");
     expect(mount).toContain("ssr: false");
     expect(actions).toContain('"use server"');
-    expect(actions).toContain("createDemoReveal");
+    expect(actions).toContain("createRehearsalReveal");
+    expect(actions).toContain("ACTIVE_REHEARSAL_CATALOGUE");
     expect(actions).not.toMatch(/READY|APPROVED|invitation|deployment/gu);
   });
 });

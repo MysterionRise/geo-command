@@ -60,3 +60,12 @@ export {
   CorpusReadinessRuleError,
   evaluateCorpusReadiness,
 } from "./inventory/corpus-readiness";
+export {
+  parsePromotionReceipt,
+  PromotionRuleError,
+  promoteAcquisitionDraft,
+} from "./acquisition/promotion/promote-draft";
+export type {
+  PromotedH001Record,
+  PromotionReceipt,
+} from "./acquisition/promotion/promote-draft";

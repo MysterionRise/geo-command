@@ -38,7 +38,8 @@ export interface LicensedGitHubEvidenceRecord extends CommonEvidenceRecord {
   }>;
   readonly acquisition: Readonly<{
     purpose: AcquisitionPurpose; observationTime: string; authoritativeReceiptTime: string;
-    repositoryMetadataSnapshotHash: string; draftIdentifier: string;
+    repositoryMetadataSnapshotHash: string; checkpointHash: string;
+    draftIdentifier: string; draftHash: string;
   }>;
   readonly license: Readonly<{
     identifier: string; filePath: string; blobSha: string; textHash: string;
@@ -53,8 +54,14 @@ export interface LicensedGitHubEvidenceRecord extends CommonEvidenceRecord {
   readonly rights: Readonly<{
     fileCoverageDecision: string; noticeDecision: string;
     redistributionDecision: string; attributionTimingDecision: string;
+    embeddedThirdPartyVendorAssessment: string;
+    presentationDesignApproval: string;
   }>;
-  readonly lineage: Readonly<{ reviewLineage: string; promotionIdentifier: string }>;
+  readonly lineage: Readonly<{
+    reviewLineage: string;
+    promotionIdentifier: string;
+    catalogueApprovalHash: string;
+  }>;
   readonly policyAuthorization: Readonly<{
     approvedPolicyRegisterVersion: string; approvedPolicyRegisterHash: string;
     authorizingEntryIdentifiers: readonly string[];

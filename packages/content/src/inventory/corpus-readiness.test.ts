@@ -64,11 +64,12 @@ interface InventoryEntryInput {
   sourceRegimeVersionId: string;
   evidence: Record<string, unknown>;
   publicationEligibility: PublicationEligibilityInput;
+  promotionReceipt: Record<string, unknown> | null;
   stackOverflowIdentity: StackOverflowItemIdentity | null;
 }
 
 interface CorpusReadinessInput {
-  fixtureKind: "SYNTHETIC_TEST_ONLY";
+  fixtureKind: "SYNTHETIC_TEST_ONLY" | "REVISION_7_AUTHENTIC";
   inventoryVersionId: string;
   difficultyPolicyVersionId: string;
   sourceRegime: SourceRegimeSelectionInput;
@@ -175,6 +176,7 @@ function entry(index: number, slot: Slot, mode: Mode, difficultyBand: Difficulty
       approvalChecks: { ...APPROVAL_CHECKS },
       reviews: reviews(mode, evidenceVersionId),
     },
+    promotionReceipt: null,
     stackOverflowIdentity: null,
   };
 }
@@ -259,6 +261,149 @@ function modelOutputEvidence(source: InventoryEntryInput): Record<string, unknow
   };
 }
 
+const gitSha = (value: number): string => (value % 10).toString().repeat(40);
+const sha256 = (value: number): string =>
+  ((value % 9) + 1).toString().repeat(64);
+
+function licensedEvidence(
+  source: InventoryEntryInput,
+  purpose: "LANGUAGE_CANDIDATE" | "RECORDED_AGENT_PARTICIPATION_CANDIDATE",
+  index: number,
+): Record<string, unknown> {
+  const { creationOrCommissionBasis: _creation, recordedProjectAuthorization: _authorization, ...common } =
+    source.evidence;
+  const child = gitSha(index + 1);
+  const path = `src/example-${index}.ts`;
+  return {
+    ...common,
+    sourceClass: "licensed-github",
+    creatorOrSourceIdentity: `owner/repo-${index}`,
+    ownershipLicenseAuthorizationBasis: "approved file-level MIT review",
+    attributionOrDisclosureText: `owner/repo-${index}, MIT`,
+    repository: { owner: "owner", name: `repo-${index}`, immutableId: `R_${index}` },
+    revision: {
+      childCommitSha: child, parentCommitSha: gitSha(index + 2),
+      childTreeSha: gitSha(index + 3), parentTreeSha: gitSha(index + 4),
+      approvedSubtree: "src", path, childBlobSha: gitSha(index + 5),
+      parentBlobSha: gitSha(index + 6),
+      sourceUrl: `https://github.com/owner/repo-${index}/blob/${child}/${path}`,
+      commitUrl: `https://github.com/owner/repo-${index}/commit/${child}`,
+      childRawSha256: sha256(index + 1), parentRawSha256: sha256(index + 2),
+      childNormalizedSha256: sha256(index + 3),
+      parentNormalizedSha256: sha256(index + 4),
+    },
+    acquisition: {
+      purpose, observationTime: "2026-07-27T12:00:00Z",
+      authoritativeReceiptTime: "2026-07-27T12:00:01Z",
+      repositoryMetadataSnapshotHash: sha256(index + 5),
+      checkpointHash: sha256(index + 15),
+      draftIdentifier: `draft-${index}`,
+      draftHash: sha256(index + 25),
+    },
+    license: {
+      identifier: "MIT", filePath: "LICENSE", blobSha: gitSha(index + 7),
+      textHash: sha256(index + 6),
+      repositoryAdmissionPolicyVersion: "repository-policy-v1",
+      repositoryAdmissionPolicyHash: sha256(index + 7),
+    },
+    marker: purpose === "LANGUAGE_CANDIDATE"
+      ? {
+          status: "language-only-not-applicable",
+          attributionMarkerPolicyVersion: "marker-policy-v1",
+          attributionMarkerPolicyHash: sha256(index + 8),
+          decision: "language-only marker decision",
+        }
+      : {
+          status: "accepted", attributionMarkerPolicyVersion: "marker-policy-v1",
+          attributionMarkerPolicyHash: sha256(index + 8),
+          classification: "AGENT_RECORDED", recordedModelName: null,
+          policyRule: "vendor-agent-v1", commitAuthor: "Fixture Author",
+          committer: "Fixture Committer", signatureVerificationResult: "verified",
+          commitMessageHash: sha256(index + 9),
+          parsedMarker: "Co-authored-by: Fixture Agent",
+          vendorSessionReference: null,
+        },
+    screeningOutcomes: [{ screen: "safe-text", result: "passed" }],
+    storage: {
+      rawSnapshotIdentifiers: [`snapshot-${index}`],
+      retentionDeadline: "2026-08-26T12:00:01Z",
+    },
+    rights: {
+      fileCoverageDecision: "APPROVED_FILE_COVERAGE",
+      noticeDecision: "APPROVED_NOTICE",
+      redistributionDecision: "APPROVED_EXCERPT_REDISTRIBUTION",
+      attributionTimingDecision: "APPROVED_REVEAL_ONLY",
+      embeddedThirdPartyVendorAssessment:
+        "APPROVED_NO_UNRESOLVED_EMBEDDED_THIRD_PARTY_VENDOR_MATERIAL",
+      presentationDesignApproval:
+        "APPROVED_DELAYED_ATTRIBUTION_PRESENTATION",
+    },
+    lineage: {
+      reviewLineage: `review-lineage-${index}`,
+      promotionIdentifier: `promotion-${index}`,
+      catalogueApprovalHash: sha256(index + 12),
+    },
+    policyAuthorization: {
+      approvedPolicyRegisterVersion: "approved-policy-v1",
+      approvedPolicyRegisterHash: sha256(index + 1),
+      authorizingEntryIdentifiers: ["repository-entry", "marker-entry"],
+    },
+    operatorAuthorization: {
+      registerVersion: "operator-register-v1",
+      registerHash: sha256(index + 2),
+      entryIdentifier: "operator-entry",
+    },
+  };
+}
+
+function revision7Fixture(): CorpusReadinessInput {
+  const input = fixture();
+  input.fixtureKind = "REVISION_7_AUTHENTIC";
+  input.sourceRegime = {
+    versionId: "source-regime-v7",
+    selectedAt: "2026-07-27T12:00:00Z",
+    selection: "licensed-github-vs-project-controlled",
+  };
+  for (const [index, item] of [...input.scheduled, ...input.reserves].entries()) {
+    item.sourceRegimeVersionId = "source-regime-v7";
+    if (item.mode === "language") {
+      item.evidence = licensedEvidence(item, "LANGUAGE_CANDIDATE", index);
+      item.promotionReceipt = promotionReceipt(item);
+    } else if (index % 2 === 0) {
+      item.evidence = licensedEvidence(
+        item,
+        "RECORDED_AGENT_PARTICIPATION_CANDIDATE",
+        index,
+      );
+      item.promotionReceipt = promotionReceipt(item);
+    } else {
+      item.evidence.noAgentParticipationAttestation =
+        "The identified creator affirmatively attests no AI coding agent participated.";
+    }
+  }
+  return input;
+}
+
+function promotionReceipt(item: InventoryEntryInput): Record<string, unknown> {
+  const acquisition = item.evidence.acquisition as Record<string, unknown>;
+  const lineage = item.evidence.lineage as Record<string, unknown>;
+  return {
+    status: "PROMOTED_H001",
+    promotionIdentifier: lineage.promotionIdentifier,
+    mode: item.mode,
+    sourceClass: "licensed-github",
+    purpose: acquisition.purpose,
+    draftHash: acquisition.draftHash,
+    catalogueHash: lineage.catalogueApprovalHash,
+    roundId: item.roundId,
+    roundVersionId: item.roundVersionId,
+    contentStableId: item.contentStableId,
+    contentHash: item.contentHash,
+    contentVersionId: item.contentVersionId,
+    evidenceVersionId: item.evidenceVersionId,
+  };
+}
+
 function stackOverflowFixture(): CorpusReadinessInput {
   const input = fixture();
   const item = input.scheduled[0]!;
@@ -332,6 +477,60 @@ describe("corpus readiness", () => {
     });
     expect(deepFrozen(result)).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/excerpt|reviewer|signature|READY|APPROVED|invitation|deployment/iu);
+  });
+
+  it("marks a complete Revision 7 active-class inventory ready", () => {
+    const result = evaluateCorpusReadiness(revision7Fixture());
+    expect(result.technicalStatus).toBe("PASS");
+    expect(result.operationalStatus).toBe("READY_FOR_CONTROLLED_BETA");
+    expect(result.counts).toEqual({
+      scheduled: 70, reserves: 15, total: 85,
+      provenanceScheduled: 42, languageScheduled: 28,
+      provenanceReserves: 9, languageReserves: 6,
+    });
+  });
+
+  it("rejects reviewed licensed evidence that has no promoted H-001 receipt", () => {
+    const input = revision7Fixture();
+    const licensed = input.scheduled.find(
+      ({ evidence: record }) => record.sourceClass === "licensed-github",
+    )!;
+    licensed.promotionReceipt = null;
+    expectRuleError(input);
+  });
+
+  it.each([
+    "status", "promotionIdentifier", "mode", "sourceClass", "purpose",
+    "draftHash", "catalogueHash", "roundId", "roundVersionId", "contentStableId",
+    "contentHash", "contentVersionId", "evidenceVersionId",
+  ] as const)("rejects promoted receipt %s drift", (field) => {
+    const input = revision7Fixture();
+    const licensed = input.scheduled.find(
+      ({ evidence: record }) => record.sourceClass === "licensed-github",
+    )!;
+    licensed.promotionReceipt![field] = "drift";
+    expectRuleError(input);
+  });
+
+  it("rejects inactive and incomplete Revision 7 evidence classes", () => {
+    const historical = revision7Fixture();
+    historical.scheduled[0]!.evidence = modelOutputEvidence(historical.scheduled[0]!);
+    expectRuleError(historical);
+
+    const missingAttestation = revision7Fixture();
+    const negative = missingAttestation.scheduled.find(({ mode, evidence }) =>
+      mode === "provenance" && evidence.sourceClass === "project-owned-human")!;
+    delete negative.evidence.noAgentParticipationAttestation;
+    expectRuleError(missingAttestation);
+
+    const wrongPurpose = revision7Fixture();
+    const language = wrongPurpose.scheduled.find(({ mode }) => mode === "language")!;
+    language.evidence = licensedEvidence(
+      language,
+      "RECORDED_AGENT_PARTICIPATION_CANDIDATE",
+      999,
+    );
+    expectRuleError(wrongPurpose);
   });
 
   it("detaches the frozen assessment from mutable synthetic input", () => {

@@ -128,7 +128,9 @@ const licensedGitHubRecord = {
     observationTime: "2026-07-27T12:00:00Z",
     authoritativeReceiptTime: "2026-07-27T12:00:01Z",
     repositoryMetadataSnapshotHash: sha256("e"),
+    checkpointHash: sha256("7"),
     draftIdentifier: "draft-001",
+    draftHash: sha256("6"),
   },
   license: {
     identifier: "MIT",
@@ -165,10 +167,13 @@ const licensedGitHubRecord = {
     noticeDecision: "include approved MIT notice at reveal",
     redistributionDecision: "approved for excerpt display",
     attributionTimingDecision: "approved for reveal",
+    embeddedThirdPartyVendorAssessment: "approved embedded material assessment",
+    presentationDesignApproval: "approved presentation design",
   },
   lineage: {
     reviewLineage: "review-lineage-001",
     promotionIdentifier: "promotion-001",
+    catalogueApprovalHash: sha256("5"),
   },
   policyAuthorization: {
     approvedPolicyRegisterVersion: "approved-policy-register-v1",
@@ -362,6 +367,21 @@ describe("evidence records", () => {
     expect(() => parseEvidenceRecord(withoutField(licensedGitHubRecord, field))).toThrow(field);
   });
 
+  it("preserves the immutable acquisition checkpoint hash", () => {
+    const parsed = parseEvidenceRecord(licensedGitHubRecord);
+    expect("acquisition" in parsed ? parsed.acquisition.checkpointHash : null).toBe(
+      sha256("7"),
+    );
+  });
+
+  it("preserves explicit embedded-material and presentation rights approvals", () => {
+    const parsed = parseEvidenceRecord(licensedGitHubRecord);
+    const rights = "rights" in parsed ? parsed.rights : null;
+    expect(rights).toEqual({
+      ...licensedGitHubRecord.rights,
+    });
+  });
+
   it.each([
     ...["owner", "name", "immutableId"].map((field) => ["repository", field] as const),
     ...[
@@ -372,7 +392,7 @@ describe("evidence records", () => {
     ].map((field) => ["revision", field] as const),
     ...[
       "purpose", "observationTime", "authoritativeReceiptTime",
-      "repositoryMetadataSnapshotHash", "draftIdentifier",
+      "repositoryMetadataSnapshotHash", "checkpointHash", "draftIdentifier", "draftHash",
     ].map((field) => ["acquisition", field] as const),
     ...[
       "identifier", "filePath", "blobSha", "textHash",
@@ -389,9 +409,10 @@ describe("evidence records", () => {
     ),
     ...[
       "fileCoverageDecision", "noticeDecision", "redistributionDecision",
-      "attributionTimingDecision",
+      "attributionTimingDecision", "embeddedThirdPartyVendorAssessment",
+      "presentationDesignApproval",
     ].map((field) => ["rights", field] as const),
-    ...["reviewLineage", "promotionIdentifier"].map(
+    ...["reviewLineage", "promotionIdentifier", "catalogueApprovalHash"].map(
       (field) => ["lineage", field] as const,
     ),
     ...[

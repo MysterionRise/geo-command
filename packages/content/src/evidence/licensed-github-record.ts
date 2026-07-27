@@ -83,7 +83,7 @@ function parseAcquisition(
 ): LicensedGitHubEvidenceRecord["acquisition"] {
   const value = requireSection(record, "acquisition", [
     "purpose", "observationTime", "authoritativeReceiptTime",
-    "repositoryMetadataSnapshotHash", "draftIdentifier",
+    "repositoryMetadataSnapshotHash", "checkpointHash", "draftIdentifier", "draftHash",
   ]);
   const purpose = requireText(value, "purpose", "acquisition.") as AcquisitionPurpose;
   if (!["LANGUAGE_CANDIDATE", "RECORDED_AGENT_PARTICIPATION_CANDIDATE"].includes(purpose)) {
@@ -102,7 +102,9 @@ function parseAcquisition(
       "repositoryMetadataSnapshotHash",
       "acquisition.",
     ),
+    checkpointHash: requireSha256(value, "checkpointHash", "acquisition."),
     draftIdentifier: requireText(value, "draftIdentifier", "acquisition."),
+    draftHash: requireSha256(value, "draftHash", "acquisition."),
   });
 }
 
@@ -272,9 +274,10 @@ export function parseLicensedGitHubEvidenceRecord(
     rights: textSection(record, "rights", [
       "fileCoverageDecision", "noticeDecision",
       "redistributionDecision", "attributionTimingDecision",
+      "embeddedThirdPartyVendorAssessment", "presentationDesignApproval",
     ]) as LicensedGitHubEvidenceRecord["rights"],
     lineage: textSection(record, "lineage", [
-      "reviewLineage", "promotionIdentifier",
+      "reviewLineage", "promotionIdentifier", "catalogueApprovalHash",
     ]) as LicensedGitHubEvidenceRecord["lineage"],
     policyAuthorization: parseAuthorization(record, "policyAuthorization", [
       "approvedPolicyRegisterVersion", "approvedPolicyRegisterHash",
