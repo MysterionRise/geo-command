@@ -1,0 +1,10 @@
+node_modules/
+.next/
+coverage/
+dist/
+playwright-report/
+test-results/
+.worktrees/
+.env
+.env.*
+!.env.example

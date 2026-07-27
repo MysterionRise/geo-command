@@ -1,0 +1,24 @@
+{
+  "name": "@codeguessr/game",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.1.2",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "@types/react": "19.0.3",
+    "@types/react-dom": "19.0.2",
+    "typescript": "5.7.2"
+  }
+}
+
