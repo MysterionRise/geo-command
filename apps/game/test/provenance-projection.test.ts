@@ -16,9 +16,8 @@ const evidenceVersion = "evidence-v7";
 const contentHash = "content-v5";
 const disclosure = "Generated with recorded model model-7.";
 
-const evidenceInput = {
+const commonEvidenceInput = {
   stableId: "content-17",
-  sourceClass: "model-output",
   contentHash,
   excerpt: "const total = values.reduce((sum, value) => sum + value, 0);",
   acquisitionMethod: "recorded generation",
@@ -32,6 +31,11 @@ const evidenceInput = {
   attributionOrDisclosureText: disclosure,
   correctionState: "current",
   publicationStatus: "approved",
+} as const;
+
+const evidenceInput = {
+  ...commonEvidenceInput,
+  sourceClass: "model-output",
   provider: "provider-7",
   model: "model-7",
   generationDate: "2026-07-09",
@@ -307,7 +311,7 @@ describe("provenance public projection", () => {
           approvedRevealAttribution: "Author, post 17, revision 3, CC BY-SA 4.0",
         };
     const approved = sourceClass === "stack-overflow" ? sourceSpecific.approvedRevealAttribution : "Created for this project.";
-    const evidence = parseEvidenceRecord({ ...evidenceInput, ...sourceSpecific, attributionOrDisclosureText: approved });
+    const evidence = parseEvidenceRecord({ ...commonEvidenceInput, ...sourceSpecific, attributionOrDisclosureText: approved });
     const projection = createProvenancePublicProjection(input(request, evidence, regime(sourceClass === "stack-overflow")));
     expect(projection.state).toBe("REVEALED");
     if (projection.state !== "REVEALED") throw new Error("expected revealed projection");
@@ -317,7 +321,7 @@ describe("provenance public projection", () => {
 
   it.each(["model-output", "stack-overflow"] as const)("rejects common disclosure drift for %s", (sourceClass) => {
     const source = sourceClass === "model-output" ? evidenceInput : {
-      ...evidenceInput, sourceClass, sourceUrl: "https://stackoverflow.com/questions/17", postId: "17", revisionId: "revision-3",
+      ...commonEvidenceInput, sourceClass, sourceUrl: "https://stackoverflow.com/questions/17", postId: "17", revisionId: "revision-3",
       author: "author-1", contributionOrRevisionDate: "2026-06-01", applicableLicense: "CC BY-SA", licenseVersion: "4.0",
       acquisitionBasis: "approved export", firstDisplayAttributionDecision: "not required", approvedRevealAttribution: "approved stack attribution",
     };
@@ -343,7 +347,7 @@ describe("provenance public projection", () => {
     ["applicableLicense", "wrong-license"], ["licenseVersion", "wrong-version"],
   ] as const)("rejects Stack Overflow determination coverage drift in %s", (field, value) => {
     const evidence = parseEvidenceRecord({
-      ...evidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
+      ...commonEvidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
       postId: "17", revisionId: "revision-3", author: "author-1", contributionOrRevisionDate: "2026-06-01",
       applicableLicense: "CC BY-SA", licenseVersion: "4.0", acquisitionBasis: "approved export",
       firstDisplayAttributionDecision: "not required", approvedRevealAttribution: "approved stack attribution",
@@ -356,7 +360,7 @@ describe("provenance public projection", () => {
 
   it.each(["required", "", "not needed"])("rejects Stack Overflow first-display decision %j", (decision) => {
     const valid = parseEvidenceRecord({
-      ...evidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
+      ...commonEvidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
       postId: "17", revisionId: "revision-3", author: "author-1", contributionOrRevisionDate: "2026-06-01",
       applicableLicense: "CC BY-SA", licenseVersion: "4.0", acquisitionBasis: "approved export",
       firstDisplayAttributionDecision: "not required", approvedRevealAttribution: "approved stack attribution",
@@ -370,7 +374,7 @@ describe("provenance public projection", () => {
 
   it("accepts the recorded approved-determination first-display wording with trim and case differences", () => {
     const valid = parseEvidenceRecord({
-      ...evidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
+      ...commonEvidenceInput, sourceClass: "stack-overflow", sourceUrl: "https://stackoverflow.com/questions/17",
       postId: "17", revisionId: "revision-3", author: "author-1", contributionOrRevisionDate: "2026-06-01",
       applicableLicense: "CC BY-SA", licenseVersion: "4.0", acquisitionBasis: "approved export",
       firstDisplayAttributionDecision: "  NOT REQUIRED BY APPROVED DETERMINATION  ", approvedRevealAttribution: "approved stack attribution",
