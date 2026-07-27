@@ -8,7 +8,11 @@ import {
   appendAuditEvent,
   READ_ONLY_PUBLIC_REPOSITORY_TOKEN,
 } from "@codeguessr/content/operator/acquisition";
-import { OperatorCommandError, runOperatorCommand } from "./index";
+import {
+  OperatorCommandError,
+  runInternalSourceReceiptStep,
+  runOperatorCommand,
+} from "./index";
 const testModuleName: string = "vitest";
 const { describe, expect, it } = await import(testModuleName) as any;
 const root = process.cwd();
@@ -307,10 +311,25 @@ describe("operator-only acquisition command", () => {
     expect(networkCalls).toBe(0);
   });
 
+  it("requires prepared external state before any source network request", async () => {
+    const fixture = effectiveFixture();
+    let networkCalls = 0;
+    const error = await runOperatorCommand(
+      ["--run", "run.json"],
+      dependencies(fixture, async () => {
+        networkCalls += 1;
+        return successfulResponse();
+      }) as never,
+    ).catch((failure) => failure);
+    expect(error).toBeInstanceOf(OperatorCommandError);
+    expect(error.message).toBe("OPERATOR_STATE_REJECTED");
+    expect(networkCalls).toBe(0);
+  });
+
   it("authorizes project-controlled scope and performs one unauthenticated public request", async () => {
     const fixture = effectiveFixture();
     const captured: Request[] = [];
-    const result = await runOperatorCommand(["--run", "run.json"], dependencies(
+    const result = await runInternalSourceReceiptStep(["--run", "run.json"], dependencies(
       fixture,
       async (request) => {
         captured.push(request);
@@ -362,13 +381,13 @@ describe("operator-only acquisition command", () => {
       { sha: "a".repeat(40), parents: [{ sha: "b".repeat(40) }, { sha: "c".repeat(40) }] },
       { sha: "a".repeat(40), parents: [{ sha: "bad" }] },
     ]) {
-      const error = await runOperatorCommand(["--run", "run.json"], dependencies(
+      const error = await runInternalSourceReceiptStep(["--run", "run.json"], dependencies(
         fixture,
         async () => new Response(JSON.stringify(data), { headers: { date: githubDate } }),
       ) as never).catch((failure) => failure);
       expect(error.message).toBe("COMMIT_RECEIPT_REJECTED");
     }
-    const skew = await runOperatorCommand(["--run", "run.json"], dependencies(
+    const skew = await runInternalSourceReceiptStep(["--run", "run.json"], dependencies(
       fixture,
       async () => new Response(JSON.stringify({
         sha: "a".repeat(40),
@@ -491,12 +510,32 @@ describe("operator-only acquisition command", () => {
         };
       },
     } as never);
-    if (!("draft" in result)) throw new Error("expected quarantined draft result");
-    expect(result.draft.state).toBe("DRAFT_REVIEW_REQUIRED");
-    expect(result.draft.input.source.path).toBe("src/answer.ts");
-    expect(result.checkpoint.rootTree).toBe(childRoot.sha);
-    expect(stored).toHaveLength(3);
+    expect(result).toMatchObject({
+      status: "DRAFT_REVIEW_REQUIRED",
+      draftId: expect.stringMatching(/^draft:[0-9a-f]{64}$/u),
+      draftHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      checkpointHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      artifactObjects: {
+        draft: {
+          objectId: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          plaintextSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+        checkpoint: {
+          objectId: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          plaintextSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+        index: {
+          objectId: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          plaintextSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("src/answer.ts");
+    expect(JSON.stringify(result)).not.toContain("export const answer");
+    expect(stored).toHaveLength(6);
     expect(audit.at(-1)?.eventType).toBe("DRAFT_COMPLETED");
+    expect(audit.at(-1)?.subjectHash)
+      .toBe((result as any).artifactObjects.index.objectId);
     expect(order[0]).toBe("state");
   });
 

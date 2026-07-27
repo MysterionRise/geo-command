@@ -255,6 +255,8 @@ const fixture = async (
     }),
   });
   const stored: string[] = [];
+  const removed: string[] = [];
+  const plaintexts = new Map<string, Uint8Array>();
   let audit: readonly Readonly<Record<string, unknown>>[] = [];
   const input = {
     receipt: certified.receipt,
@@ -263,14 +265,23 @@ const fixture = async (
     loadTree: async (sha: string) => trees.get(sha) ?? Promise.reject(new Error("tree canary")),
     loadBlob: async (sha: string) => blobs.get(sha) ?? Promise.reject(new Error("blob canary")),
     store: {
-      put: async ({ identity }: { identity: { objectId: string } }) => {
+      put: async ({
+        identity,
+        plaintext,
+      }: {
+        identity: { objectId: string };
+        plaintext: Uint8Array;
+      }) => {
         stored.push(identity.objectId);
+        plaintexts.set(identity.objectId, new Uint8Array(plaintext));
         return { identity, created: true };
       },
       remove: async (identity: { objectId: string }) => {
         const index = stored.indexOf(identity.objectId);
         if (index < 0) return false;
         stored.splice(index, 1);
+        plaintexts.delete(identity.objectId);
+        removed.push(identity.objectId);
         return true;
       },
     },
@@ -281,7 +292,10 @@ const fixture = async (
       },
     },
   };
-  return { input, stored, audit: () => audit, childBytes, parentBytes, licenseBytes };
+  return {
+    input, stored, removed, plaintexts, audit: () => audit,
+    childBytes, parentBytes, licenseBytes,
+  };
 };
 
 describe("authorized offline acquisition orchestration", () => {
@@ -306,11 +320,31 @@ describe("authorized offline acquisition orchestration", () => {
     expect(result.draft.input.diff).toBe(null);
     expect(result.checkpoint.rootTree).toBe(value.input.receipt.childTreeSha);
     expect(result.checkpoint.verifiedObjects).toHaveLength(3);
-    expect(new Set(value.stored)).toEqual(new Set([
+    expect(result.artifacts.draft.plaintextSha256).toBe(result.artifacts.draft.objectId);
+    expect(result.artifacts.checkpoint.plaintextSha256)
+      .toBe(result.artifacts.checkpoint.objectId);
+    expect(result.artifacts.index.plaintextSha256).toBe(result.artifacts.index.objectId);
+    expect(result.artifacts.draft.objectId).not.toBe(result.draft.draftHash);
+    expect(result.artifacts.checkpoint.objectId).not.toBe(result.checkpoint.checkpointHash);
+    expect(JSON.parse(new TextDecoder().decode(
+      value.plaintexts.get(result.artifacts.index.objectId),
+    ))).toEqual({
+      version: 1,
+      status: "DRAFT_REVIEW_REQUIRED",
+      draftId: result.draft.draftId,
+      draftHash: result.draft.draftHash,
+      checkpointHash: result.checkpoint.checkpointHash,
+      artifactObjects: {
+        draft: result.artifacts.draft,
+        checkpoint: result.artifacts.checkpoint,
+      },
+    });
+    expect(new Set(value.stored.slice(0, 3))).toEqual(new Set([
       sha256(value.childBytes),
       sha256(value.parentBytes),
       sha256(value.licenseBytes),
     ]));
+    expect(value.stored).toHaveLength(6);
     expect(value.audit().map((event) => event.eventType)).toEqual([
       "RUN_STARTED",
       "RAW_OBJECT_CREATED",
@@ -318,6 +352,7 @@ describe("authorized offline acquisition orchestration", () => {
       "RAW_OBJECT_CREATED",
       "DRAFT_COMPLETED",
     ]);
+    expect(value.audit().at(-1)?.subjectHash).toBe(result.artifacts.index.objectId);
     expect(Object.isFrozen(result)).toBe(true);
     expect("promote" in result.draft).toBe(false);
   });
@@ -428,6 +463,27 @@ describe("authorized offline acquisition orchestration", () => {
     expect(error.message).toBe("AUDIT_REJECTED");
     expect(value.stored).toEqual([]);
     expect(JSON.stringify(value.audit())).not.toContain("audit canary");
+  });
+
+  it("rolls back newly stored derived artifacts when draft completion cannot be audited", async () => {
+    const value = await fixture("LANGUAGE_CANDIDATE");
+    const error = await orchestrateAcquisitionDraft({
+      ...value.input,
+      audit: {
+        append: async (event: any) => {
+          if (event.eventType === "DRAFT_COMPLETED") throw new Error("audit canary");
+          return value.input.audit.append(event);
+        },
+      },
+    } as never).catch((failure) => failure);
+    expect(error).toBeInstanceOf(AcquisitionOrchestrationError);
+    expect(error.message).toBe("AUDIT_REJECTED");
+    expect(new Set(value.stored)).toEqual(new Set([
+      sha256(value.childBytes),
+      sha256(value.parentBytes),
+      sha256(value.licenseBytes),
+    ]));
+    expect(value.removed).toHaveLength(3);
   });
 
   it("rejects commit or subtree drift from the preflight run before network", async () => {

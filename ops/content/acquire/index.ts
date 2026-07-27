@@ -52,7 +52,7 @@ interface Dependencies {
   fetch(request: Request): Promise<Response>;
   now(): number;
   osIdentity(): string;
-  prepareOperatorState?(): Promise<Readonly<{
+  prepareOperatorState(): Promise<Readonly<{
     open(operatorRun: AuthorizedOperatorRun): Promise<
       Pick<AcquisitionOrchestrationInput, "store" | "audit">
     >;
@@ -226,10 +226,14 @@ export const authorizeExecutionDescriptor = (
     attributionPolicyDocument: controls.attributionPolicy,
   });
 };
-export const runOperatorCommand = async (
+
+const loadAuthorizedExecution = async (
   argv: readonly string[],
-  dependencies: Dependencies,
-) => {
+  dependencies: Pick<
+    Dependencies,
+    "loadRunDescriptor" | "loadProjectControls" | "now" | "osIdentity"
+  >,
+): Promise<AuthorizedExecution> => {
   const reference = runReference(argv);
   const receiptTime = trustedReceiptTime(dependencies.now());
   const osIdentity = dependencies.osIdentity();
@@ -237,28 +241,64 @@ export const runOperatorCommand = async (
     .catch(() => fail("RUN_DESCRIPTOR_REJECTED"));
   const controls = await dependencies.loadProjectControls()
     .catch(() => fail("PROJECT_CONTROL_REJECTED"));
-  let execution: AuthorizedExecution;
-  try { execution = authorizeExecutionDescriptor(raw, controls, receiptTime, osIdentity); }
-  catch { return fail("AUTHORIZATION_REJECTED"); }
-  const preparedState = dependencies.prepareOperatorState === undefined
-    ? undefined
-    : await dependencies.prepareOperatorState()
-      .catch(() => fail("OPERATOR_STATE_REJECTED"));
   try {
-    const transport = new BoundedGitHubTransport({ fetch: dependencies.fetch });
-    const source = await acquireAuthorizedCommitReceipt({
+    return authorizeExecutionDescriptor(raw, controls, receiptTime, osIdentity);
+  } catch {
+    return fail("AUTHORIZATION_REJECTED");
+  }
+};
+
+const acquireSource = (
+  execution: AuthorizedExecution,
+  fetch: Dependencies["fetch"],
+) => {
+  const transport = new BoundedGitHubTransport({ fetch });
+  return {
+    transport,
+    source: acquireAuthorizedCommitReceipt({
       request: execution.request,
       repositoryPolicy: execution.repositoryPolicy,
       attributionPolicy: execution.attributionPolicy,
       preflightOperatorRun: execution.operatorRun,
       operatorAuthorization: execution.operatorAuthorization,
       transport,
-    });
-    if (preparedState === undefined) return source.receipt;
+    }),
+  };
+};
+
+export const runInternalSourceReceiptStep = async (
+  argv: readonly string[],
+  dependencies: Omit<Dependencies, "prepareOperatorState">,
+) => {
+  const execution = await loadAuthorizedExecution(argv, dependencies);
+  try {
+    return (await acquireSource(execution, dependencies.fetch).source).receipt;
+  } catch (error) {
+    if (error instanceof AuthorizedSourceError) return fail(error.message);
+    return fail("SOURCE_RECEIPT_REJECTED");
+  }
+};
+
+export const runOperatorCommand = async (
+  argv: readonly string[],
+  dependencies: Dependencies,
+) => {
+  const execution = await loadAuthorizedExecution(argv, dependencies);
+  if (dependencies.prepareOperatorState === undefined) {
+    return fail("OPERATOR_STATE_REJECTED");
+  }
+  const preparedState = await dependencies.prepareOperatorState()
+    .catch(() => fail("OPERATOR_STATE_REJECTED"));
+  try {
+    const acquisition = acquireSource(execution, dependencies.fetch);
+    const source = await acquisition.source;
     const state = await preparedState.open(source.operatorRun)
       .catch(() => fail("OPERATOR_STATE_REJECTED"));
-    const objects = new GitHubObjectAdapter({ request: execution.request, transport });
-    return await orchestrateAcquisitionDraft({
+    const objects = new GitHubObjectAdapter({
+      request: execution.request,
+      transport: acquisition.transport,
+    });
+    const result = await orchestrateAcquisitionDraft({
       receipt: source.receipt,
       repositoryPolicy: execution.repositoryPolicy,
       attributionPolicy: execution.attributionPolicy,
@@ -269,6 +309,13 @@ export const runOperatorCommand = async (
       store: state.store,
       audit: state.audit,
     });
+    return cloneFreeze({
+      status: result.draft.state,
+      draftId: result.draft.draftId,
+      draftHash: result.draft.draftHash,
+      checkpointHash: result.checkpoint.checkpointHash,
+      artifactObjects: result.artifacts,
+    });
   } catch (error) {
     if (
       error instanceof OperatorCommandError
@@ -278,7 +325,7 @@ export const runOperatorCommand = async (
     ) return fail(error.message);
     return fail("ACQUISITION_REJECTED");
   } finally {
-    preparedState?.dispose();
+    preparedState.dispose();
   }
 };
 

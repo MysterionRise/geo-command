@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   createAcquisitionDraft,
+  serializeAcquisitionDraft,
   type AcquisitionDraft,
 } from "../draft/acquisition-draft";
 import {
@@ -97,6 +98,11 @@ export interface AcquisitionOrchestrationInput {
 export interface AcquisitionOrchestrationResult {
   readonly draft: AcquisitionDraft;
   readonly checkpoint: AcquisitionCheckpoint;
+  readonly artifacts: {
+    readonly draft: SnapshotIdentity;
+    readonly checkpoint: SnapshotIdentity;
+    readonly index: SnapshotIdentity;
+  };
 }
 
 interface LoadedObjects {
@@ -117,6 +123,14 @@ interface Candidate {
 
 const sha256 = (value: Uint8Array | string): string =>
   createHash("sha256").update(value).digest("hex");
+const artifactIdentity = (plaintext: Uint8Array): SnapshotIdentity => {
+  const digest = sha256(plaintext);
+  return Object.freeze({
+    objectId: digest,
+    plaintextSha256: digest,
+    byteLength: plaintext.byteLength,
+  });
+};
 const deepFreeze = <Value>(value: Value): Value => {
   if (value !== null && typeof value === "object") {
     Object.values(value as Record<string, unknown>).forEach(deepFreeze);
@@ -442,6 +456,59 @@ const persistSnapshots = async (
   return receipts;
 };
 
+const persistDerivedArtifacts = async (
+  input: AcquisitionOrchestrationInput,
+  draft: AcquisitionDraft,
+  progress: AcquisitionCheckpoint,
+) => {
+  const created: SnapshotIdentity[] = [];
+  const rollback = async (): Promise<void> => {
+    for (const identity of [...created].reverse()) {
+      const removed = await input.store.remove(identity)
+        .catch(() => fail("DRAFT_ARTIFACT_ROLLBACK_REJECTED"));
+      if (!removed) fail("DRAFT_ARTIFACT_ROLLBACK_REJECTED");
+    }
+  };
+  try {
+    const put = async (plaintext: Uint8Array): Promise<SnapshotIdentity> => {
+      const identity = artifactIdentity(plaintext);
+      const stored = await input.store.put({
+        identity,
+        plaintext,
+      });
+      if (stored.created) created.push(stored.identity);
+      return stored.identity;
+    };
+    const draftIdentity = await put(serializeAcquisitionDraft(draft));
+    const checkpointIdentity = await put(
+      new TextEncoder().encode(JSON.stringify(progress)),
+    );
+    const indexIdentity = await put(new TextEncoder().encode(JSON.stringify({
+      version: 1,
+      status: draft.state,
+      draftId: draft.draftId,
+      draftHash: draft.draftHash,
+      checkpointHash: progress.checkpointHash,
+      artifactObjects: {
+        draft: draftIdentity,
+        checkpoint: checkpointIdentity,
+      },
+    })));
+    return Object.freeze({
+      artifacts: Object.freeze({
+        draft: draftIdentity,
+        checkpoint: checkpointIdentity,
+        index: indexIdentity,
+      }),
+      rollback,
+    });
+  } catch (error) {
+    await rollback();
+    if (error instanceof AcquisitionOrchestrationError) throw error;
+    return fail("DRAFT_PERSISTENCE_REJECTED");
+  }
+};
+
 const auditRun = (
   input: AcquisitionOrchestrationInput,
   runId: string,
@@ -667,10 +734,17 @@ const executeOrchestration = async (
   } catch {
     return fail("DRAFT_REJECTED");
   }
-  await appendAudit(input, auditEvent(
-    input, runId, "DRAFT_COMPLETED", draft.draftHash, "DRAFT_REVIEW_REQUIRED",
-  ));
-  return deepFreeze({ draft, checkpoint: progress });
+  const persisted = await persistDerivedArtifacts(input, draft, progress);
+  try {
+    await appendAudit(input, auditEvent(
+      input, runId, "DRAFT_COMPLETED", persisted.artifacts.index.objectId,
+      "DRAFT_REVIEW_REQUIRED",
+    ));
+  } catch (error) {
+    await persisted.rollback();
+    throw error;
+  }
+  return deepFreeze({ draft, checkpoint: progress, artifacts: persisted.artifacts });
 };
 
 export const orchestrateAcquisitionDraft = async (

@@ -2,7 +2,7 @@
 heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
-timestamp: 2026-07-27T22:04:07+01:00
+timestamp: 2026-07-27T22:17:01+01:00
 next-action: Add durable draft/checkpoint evidence output and resumable paused-run handling before any authorized live WP-024 or WP-025 run
 completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023]
 pending-wps: [WP-024, WP-025, WP-026, WP-027]
@@ -18,6 +18,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-promotion-game-adapters.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-offline-acquisition-orchestration.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-production-operator-wiring.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-durable-acquisition-artifacts.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -79,3 +80,11 @@ After source certification, the command opens the real encrypted store and durab
 Fresh root evidence is workspace TAP, 60/60 Vitest files and 1,919/1,919 tests, recursive workspace/operator typecheck, production game build, all 3 containment checks and clean diff hygiene. Independent audit reports no remaining Critical, Important or Minor findings and marks the slice READY.
 
 WP-024 and WP-025 remain pending. The command does not yet durably write the derived draft/checkpoint evidence or resume a paused rate-limited run. Active project policy and operator registers remain non-effective, so no live GitHub run, real draft, review, promotion or playable rehearsal has occurred.
+
+The durable acquisition-artifact prerequisite is accepted after one corrective independent audit. A completed run now stores the full draft and checkpoint through the authenticated encrypted object store, stores a deterministic artifact index binding both complete storage identities to the draft/checkpoint logical hashes, and places the index object ID in the durable `DRAFT_COMPLETED` audit event. Failure to persist or audit completion rolls back every newly created derived artifact.
+
+The actual operator command now requires prepared external state before transport construction or network access and returns only a frozen metadata-safe receipt containing status, logical hashes and encrypted artifact identities. Receipt-only acquisition exists solely as an explicitly named internal step and is not used by the CLI.
+
+Fresh root evidence is workspace TAP, 60/60 Vitest files and 1,921/1,921 tests, recursive workspace/operator typecheck, production game build, all 3 containment checks and clean diff hygiene. Independent re-audit reports no Critical, Important or Minor findings and marks the slice READY.
+
+WP-024 and WP-025 remain pending because valid GitHub rate-limit pauses are not yet durably checkpointed or explicitly resumable. Active controls remain non-effective; no live acquisition or real-content claim has occurred.
