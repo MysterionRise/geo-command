@@ -22,6 +22,15 @@ export interface TreeWalkOptions {
   readonly loadBlob: (sha: string) => Promise<Uint8Array>;
   readonly checkpoint: (state: WalkResult) => void;
 }
+export interface ResolveSubtreeOptions {
+  readonly approvedSubtree: string;
+  readonly rootTreeSha: string;
+  readonly loadTree: (sha: string) => Promise<GitTreeResponse>;
+}
+export interface ResolvedSubtree {
+  readonly subtreeTreeSha: string;
+  readonly visitedTreeShas: readonly string[];
+}
 export class TreeWalkError extends Error {
   public constructor(code: string) {
     super(code);
@@ -56,7 +65,10 @@ const treeIdentity = (entries: readonly GitTreeEntry[]): string => {
   return gitObjectSha("tree", Buffer.concat(encoded));
 };
 
-const validateEntry = (entry: unknown): asserts entry is GitTreeEntry => {
+const validateEntry = (
+  entry: unknown,
+  rejectUnsafe = true,
+): asserts entry is GitTreeEntry => {
   if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
     fail("MALFORMED_TREE_ENTRY");
   }
@@ -73,13 +85,19 @@ const validateEntry = (entry: unknown): asserts entry is GitTreeEntry => {
   if (!ENTRY_NAME.test(typedEntry.path) || !FULL_SHA.test(typedEntry.sha)) {
     fail("MALFORMED_TREE_ENTRY");
   }
-  if (typedEntry.mode === "120000") fail("SYMLINK_REJECTED");
-  if (typedEntry.mode === "160000" || typedEntry.type === "commit") fail("SUBMODULE_REJECTED");
+  if (rejectUnsafe && typedEntry.mode === "120000") fail("SYMLINK_REJECTED");
+  if (rejectUnsafe && (typedEntry.mode === "160000" || typedEntry.type === "commit")) {
+    fail("SUBMODULE_REJECTED");
+  }
   const regularBlob =
     typedEntry.type === "blob"
     && (typedEntry.mode === "100644" || typedEntry.mode === "100755");
   const directory = typedEntry.type === "tree" && typedEntry.mode === "040000";
-  if (!regularBlob && !directory) fail("MALFORMED_TREE_ENTRY");
+  const symlink = !rejectUnsafe
+    && typedEntry.type === "blob" && typedEntry.mode === "120000";
+  const submodule = !rejectUnsafe
+    && typedEntry.type === "commit" && typedEntry.mode === "160000";
+  if (!regularBlob && !directory && !symlink && !submodule) fail("MALFORMED_TREE_ENTRY");
 };
 
 const validateTreeResponse: (
@@ -103,6 +121,50 @@ const snapshot = (
   selectedBlobs: Object.freeze([...selectedBlobs]),
   visitedObjectShas: Object.freeze([...visitedObjectShas]),
 });
+
+const verifiedTree = async (
+  sha: string,
+  loadTree: ResolveSubtreeOptions["loadTree"],
+): Promise<GitTreeResponse> => {
+  const response = await loadTree(sha);
+  validateTreeResponse(response);
+  if (response.sha !== sha || response.truncated) {
+    fail(response.truncated ? "TRUNCATED_TREE" : "TREE_IDENTITY_MISMATCH");
+  }
+  if (response.tree.length > MAX_TREE_ENTRIES) fail("TREE_ENTRY_LIMIT");
+  response.tree.forEach((entry: unknown) => validateEntry(entry, false));
+  const names = response.tree.map(({ path }) => path);
+  if (new Set(names).size !== names.length) fail("DUPLICATE_TREE_ENTRY");
+  if (treeIdentity(response.tree) !== sha) fail("TREE_IDENTITY_MISMATCH");
+  return response;
+};
+
+export const resolveApprovedSubtree = async (
+  options: ResolveSubtreeOptions,
+): Promise<ResolvedSubtree> => {
+  if (!FULL_SHA.test(options.rootTreeSha)) fail("MALFORMED_ROOT_TREE");
+  const segments = options.approvedSubtree.split("/");
+  if (
+    segments.length === 0
+    || segments.some((segment) => !ENTRY_NAME.test(segment))
+  ) fail("MALFORMED_APPROVED_SUBTREE");
+  let cursor = options.rootTreeSha;
+  const visited: string[] = [];
+  for (const segment of segments) {
+    const response = await verifiedTree(cursor, options.loadTree);
+    visited.push(cursor);
+    const entry = response.tree.find(({ path }) => path === segment)
+      ?? fail("APPROVED_SUBTREE_NOT_FOUND");
+    if (entry.type !== "tree" || entry.mode !== "040000") {
+      fail("APPROVED_SUBTREE_NOT_FOUND");
+    }
+    cursor = entry.sha;
+  }
+  return Object.freeze({
+    subtreeTreeSha: cursor,
+    visitedTreeShas: Object.freeze(visited),
+  });
+};
 
 type PendingObject =
   | { readonly kind: "tree"; readonly path: string; readonly sha: string }

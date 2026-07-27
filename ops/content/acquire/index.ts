@@ -4,8 +4,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   authorizeOperatorRun,
   authorizePolicy,
+  acquireAuthorizedCommitReceipt,
+  AuthorizedSourceError,
   BoundedGitHubTransport,
-  buildCommitEndpoint,
   canonicalSha256,
   validateAcquisitionRequest,
   type AcquisitionRequest,
@@ -16,11 +17,15 @@ import {
 } from "@codeguessr/content/operator/acquisition";
 
 type Json = Record<string, unknown>;
+type DescriptorOperatorAuthorization = Omit<
+  OperatorAuthorizationInput,
+  "commit" | "subtree"
+>;
 interface ExecutionDescriptor {
   readonly request: unknown;
   readonly repositoryPolicy: PolicyAuthorizationInput;
   readonly attributionPolicy: PolicyAuthorizationInput;
-  readonly operatorAuthorization: OperatorAuthorizationInput;
+  readonly operatorAuthorization: DescriptorOperatorAuthorization;
 }
 interface ProjectControls {
   readonly repositoryPolicy: Readonly<Record<string, unknown>>;
@@ -187,6 +192,8 @@ export const authorizeExecutionDescriptor = (
   );
   const operatorAuthorization = cloneFreeze({
     ...input.operatorAuthorization,
+    commit: request.commit,
+    subtree: request.subtree,
     osIdentity,
     authoritativeReceiptTime: receiptTime,
     githubDate: new Date(receiptTime).toUTCString(),
@@ -206,18 +213,6 @@ export const authorizeExecutionDescriptor = (
     operatorAuthorization,
   });
 };
-const validateCommitReceipt = (raw: unknown, request: AcquisitionRequest): string => {
-  const data = raw as Json;
-  const parents = Array.isArray(data?.parents) ? data.parents : fail("COMMIT_RECEIPT_REJECTED");
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)
-    || data.sha !== request.commit || parents.length !== 1
-    || parents[0] === null || typeof parents[0] !== "object"
-    || !/^[0-9a-f]{40}$/u.test((parents[0] as Json).sha as string)) {
-    fail("COMMIT_RECEIPT_REJECTED");
-  }
-  return (parents[0] as Json).sha as string;
-};
-
 export const runOperatorCommand = async (
   argv: readonly string[],
   dependencies: Dependencies,
@@ -233,26 +228,19 @@ export const runOperatorCommand = async (
   try { execution = authorizeExecutionDescriptor(raw, controls, receiptTime, osIdentity); }
   catch { return fail("AUTHORIZATION_REJECTED"); }
   const transport = new BoundedGitHubTransport({ fetch: dependencies.fetch });
-  const receipt = await transport.requestReceipt(buildCommitEndpoint(execution.request));
-  const parentSha = validateCommitReceipt(receipt.data, execution.request);
-  let receiptRun: AuthorizedOperatorRun;
   try {
-    receiptRun = authorizeOperatorRun({
-      ...execution.operatorAuthorization,
-      githubDate: receipt.responseDate,
-    });
-  } catch { return fail("RECEIPT_AUTHORIZATION_REJECTED"); }
-  return Object.freeze({
-    status: "AUTHORIZED_COMMIT_RECEIPT" as const,
-    repository: execution.request.repository,
-    childSha: execution.request.commit,
-    parentSha,
-    responseDate: receipt.responseDate,
-    purpose: execution.request.purpose,
-    repositoryPolicyHash: execution.repositoryPolicy.policyHash,
-    attributionPolicyHash: execution.attributionPolicy.policyHash,
-    operatorEntryId: receiptRun.entryId,
-  });
+    return (await acquireAuthorizedCommitReceipt({
+      request: execution.request,
+      repositoryPolicy: execution.repositoryPolicy,
+      attributionPolicy: execution.attributionPolicy,
+      preflightOperatorRun: execution.operatorRun,
+      operatorAuthorization: execution.operatorAuthorization,
+      transport,
+    })).receipt;
+  } catch (error) {
+    return fail(error instanceof AuthorizedSourceError
+      ? error.message : "SOURCE_RECEIPT_REJECTED");
+  }
 };
 
 const policies = resolve(fileURLToPath(new URL("../policies", import.meta.url)));

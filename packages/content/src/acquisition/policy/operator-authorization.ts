@@ -41,6 +41,8 @@ export interface OperatorAuthorizationInput {
   readonly operatorName: string;
   readonly osIdentity: string;
   readonly repository: string;
+  readonly commit: string;
+  readonly subtree: string;
   readonly purpose: AcquisitionPurpose;
   readonly tokenAllowance: typeof READ_ONLY_PUBLIC_REPOSITORY_TOKEN;
   readonly callerObservationTime: string;
@@ -52,6 +54,8 @@ export interface AuthorizedOperatorRun {
   readonly operatorName: string;
   readonly osIdentity: string;
   readonly repository: string;
+  readonly commit: string;
+  readonly subtree: string;
   readonly purpose: AcquisitionPurpose;
   readonly tokenAllowance: typeof READ_ONLY_PUBLIC_REPOSITORY_TOKEN;
   readonly callerObservationTime: string;
@@ -81,6 +85,8 @@ const fail = (message: string): never => {
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 const REPOSITORY_IDENTITY = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u;
+const FULL_SHA = /^[0-9a-f]{40}$/u;
+const SUBTREE_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 const IMF_FIXDATE =
   /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/u;
 
@@ -237,6 +243,13 @@ const validateRunIdentity = (
   if (!REPOSITORY_IDENTITY.test(input.repository) || !entry.repositories.includes(input.repository)) {
     fail("repository is not authorized");
   }
+  const subtree = input.subtree?.split("/");
+  if (
+    !FULL_SHA.test(input.commit)
+    || !Array.isArray(subtree)
+    || subtree.length === 0
+    || subtree.some((segment) => !SUBTREE_SEGMENT.test(segment))
+  ) fail("source identity is invalid");
   if (!ACQUISITION_PURPOSES.includes(input.purpose) || !entry.purposes.includes(input.purpose)) {
     fail("purpose is not authorized");
   }
@@ -259,6 +272,8 @@ export const authorizeOperatorRun = (
     operatorName,
     osIdentity,
     repository: input.repository,
+    commit: input.commit,
+    subtree: input.subtree,
     purpose: input.purpose,
     tokenAllowance: input.tokenAllowance,
     callerObservationTime: observationTime,

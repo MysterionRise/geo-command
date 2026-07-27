@@ -2,8 +2,8 @@
 heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
-timestamp: 2026-07-27T21:06:27+01:00
-next-action: Implement the offline end-to-end acquisition orchestration needed before any authorized WP-024/WP-025 live run
+timestamp: 2026-07-27T21:47:10+01:00
+next-action: Wire the certified receipt to production Git tree/blob adapters and approved external store/audit/checkpoint configuration
 completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023]
 pending-wps: [WP-024, WP-025, WP-026, WP-027]
 failed-wps: []
@@ -16,6 +16,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-github-core-territory.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-secure-operator-operations.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-promotion-game-adapters.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-offline-acquisition-orchestration.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -61,3 +62,11 @@ A fresh root sweep passes workspace TAP, 57/57 Vitest files and 1,902/1,902 test
 WP-018 through WP-023 are implementation-complete. This checkpoint does not claim a real-content rehearsal: no live GitHub acquisition, reviewer decision, promotion or activation occurred. Full real-entry traversal through `LanguageFlow` and `ProvenanceFlow`, pre-answer containment, and post-answer attribution remain WP-024 through WP-027 work.
 
 The next safe implementation step is offline orchestration from the existing authorized commit receipt through immutable traversal, checkpointing, screening, encrypted storage, durable audit and `DRAFT_REVIEW_REQUIRED` construction. Any real WP-024/WP-025 network run remains blocked until the project-controlled policy and operator registers are made effective by real authorities.
+
+The offline acquisition orchestration prerequisite is accepted after three corrective independent audits. The operator now issues an opaque source receipt only after bounded child/parent/repository requests certify commit, tree, identity, verification, metadata and licence-admission facts. The issued operator run binds the exact commit and subtree; a byte-identical cloned receipt and a drifted request both fail before object access or network respectively.
+
+The orchestrator verifies both root/subtree revisions, screens before persistence, reconstructs provenance changes from raw blobs, derives the licence blob from the verified child root, stores raw bytes in the encrypted capability, records immediate metadata-only audit continuity, rolls back a newly created object when its audit event fails, and emits only `DRAFT_REVIEW_REQUIRED` plus a bound checkpoint.
+
+Fresh root evidence is workspace TAP, 58/58 Vitest files and 1,912/1,912 tests, recursive workspace/operator typecheck, production game build, and all 3 containment checks.
+
+WP-024 and WP-025 remain pending. The production command stops at the certified source receipt; it still needs real Git tree/blob adapters and approved external store, audit, checkpoint and draft-output configuration. Non-effective project controls continue to prohibit a live run.

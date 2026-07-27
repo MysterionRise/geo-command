@@ -31,6 +31,7 @@ const authorizedRun = authorizeOperatorRun({
     entryId: operatorEntry.entryId,
   },
   operatorName: "Operator", osIdentity: "uid:1", repository: "owner/repo",
+  commit: "a".repeat(40), subtree: "src",
   purpose: "LANGUAGE_CANDIDATE", tokenAllowance: READ_ONLY_PUBLIC_REPOSITORY_TOKEN,
   callerObservationTime: "2026-01-01T00:00:00Z",
   authoritativeReceiptTime: "2026-01-01T00:00:00Z",

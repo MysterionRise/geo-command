@@ -30,7 +30,19 @@ export {
 } from "./policy/operator-authorization";
 export {
   buildCommitEndpoint,
+  buildRepositoryEndpoint,
   validateAcquisitionRequest,
   type AcquisitionRequest,
 } from "./github/request";
 export { BoundedGitHubTransport } from "./github/transport";
+export {
+  acquireAuthorizedCommitReceipt,
+  AuthorizedSourceError,
+  type AuthorizedCommitReceipt,
+} from "./operator/authorized-source";
+export {
+  orchestrateAcquisitionDraft,
+  AcquisitionOrchestrationError,
+  type AcquisitionOrchestrationInput,
+  type AcquisitionOrchestrationResult,
+} from "./operator/orchestrate-draft";

@@ -13,6 +13,7 @@ const TYPES = [
   "RAW_OBJECT_DELETED", "DRAFT_COMPLETED", "REVIEW_TRANSITION", "PROMOTION_HANDOFF",
 ] as const;
 const H64 = /^[0-9a-f]{64}$/u;
+const H40 = /^[0-9a-f]{40}$/u;
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u;
 const CODE = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/u;
 const REPOSITORY = /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u;
@@ -22,7 +23,7 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1_000;
 type Json = Record<string, unknown>;
 type AuditRun = Pick<
   AuthorizedOperatorRun,
-  "operatorName" | "osIdentity" | "repository" | "purpose"
+  "operatorName" | "osIdentity" | "repository" | "commit" | "subtree" | "purpose"
   | "tokenAllowance" | "callerObservationTime" | "authoritativeReceiptTime"
   | "githubDate" | "registerVersion" | "registerHash" | "entryId"
   | "authorizationValidFrom" | "authorizationValidThrough"
@@ -52,8 +53,9 @@ const freeze = <T>(value: T): T => {
 const INPUT = ["eventIdentity", "eventTime", "eventType", "reasonCode", "run", "subjectHash"];
 const RUN = [
   "authorizationValidFrom", "authorizationValidThrough", "authoritativeReceiptTime",
-  "callerObservationTime", "entryId", "githubDate", "operatorName", "osIdentity",
+  "callerObservationTime", "commit", "entryId", "githubDate", "operatorName", "osIdentity",
   "purpose", "registerHash", "registerVersion", "repository", "runId", "tokenAllowance",
+  "subtree",
 ];
 const RECORD = [...INPUT, "eventHash", "previousHash", "sequence"];
 const wholeSecond = (value: unknown): value is string =>
@@ -75,6 +77,9 @@ const validateInput = (raw: unknown): Json => {
     || !H64.test(input.eventIdentity as string) || !H64.test(input.subjectHash as string)
     || !CODE.test(input.reasonCode as string) || (input.reasonCode as string).length > 128
     || !H64.test(run.runId as string) || !H64.test(run.registerHash as string)
+    || !H40.test(run.commit as string)
+    || typeof run.subtree !== "string"
+    || !/^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/u.test(run.subtree)
     || !REPOSITORY.test(run.repository as string)
     || !["LANGUAGE_CANDIDATE", "RECORDED_AGENT_PARTICIPATION_CANDIDATE"]
       .includes(run.purpose as string)

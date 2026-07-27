@@ -14,6 +14,17 @@ const receipt = "2026-01-01T00:00:00Z";
 const receiptMs = Date.parse(receipt);
 const githubDate = "Thu, 01 Jan 2026 00:00:00 GMT";
 const purpose = "LANGUAGE_CANDIDATE";
+const childTreeSha = "c".repeat(40);
+const parentTreeSha = "d".repeat(40);
+const commitMessage = "Implement answer\n\nCo-authored-by: Claude <noreply@anthropic.com>";
+const repositoryMetadata = {
+  repositoryId: "R_1",
+  repository: "owner/repo",
+  visibility: "public",
+  archived: false,
+  disabled: false,
+  licenseIdentifier: "MIT",
+};
 const effectiveFixture = (validThrough?: string) => {
   const policy = (
     policyClass: "REPOSITORY_ADMISSION" | "ATTRIBUTION_MARKER",
@@ -132,10 +143,32 @@ const dependencies = (
 const successfulResponse = () => new Response(JSON.stringify({
   sha: "a".repeat(40),
   parents: [{ sha: "b".repeat(40) }],
+  commit: {
+    message: commitMessage,
+    tree: { sha: childTreeSha },
+    verification: { verified: true, reason: "valid" },
+    author: { name: "Developer" },
+    committer: { name: "Developer" },
+  },
+  author: { login: "developer", type: "User" },
+  committer: { login: "developer", type: "User" },
 }), {
   status: 200,
   headers: { "content-type": "application/json", date: githubDate },
 });
+const parentResponse = () => new Response(JSON.stringify({
+  sha: "b".repeat(40),
+  commit: { tree: { sha: parentTreeSha } },
+}), { status: 200, headers: { "content-type": "application/json" } });
+const repositoryResponse = () => new Response(JSON.stringify({
+  node_id: repositoryMetadata.repositoryId,
+  full_name: repositoryMetadata.repository,
+  visibility: repositoryMetadata.visibility,
+  private: false,
+  archived: repositoryMetadata.archived,
+  disabled: repositoryMetadata.disabled,
+  license: { spdx_id: repositoryMetadata.licenseIdentifier },
+}), { status: 200, headers: { "content-type": "application/json" } });
 describe("operator-only acquisition command", () => {
   it("exposes acquisition only through a node operator subpath and locked root runner", async () => {
     const workspace = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -247,23 +280,42 @@ describe("operator-only acquisition command", () => {
 
   it("authorizes project-controlled scope and performs one unauthenticated public request", async () => {
     const fixture = effectiveFixture();
-    let captured: Request | undefined;
+    const captured: Request[] = [];
     const result = await runOperatorCommand(["--run", "run.json"], dependencies(
       fixture,
       async (request) => {
-        captured = request;
-        return successfulResponse();
+        captured.push(request);
+        if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) return successfulResponse();
+        if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) return parentResponse();
+        if (request.url === "https://api.github.com/repos/owner/repo") {
+          return repositoryResponse();
+        }
+        throw new Error("unexpected endpoint");
       },
     ) as never);
-    expect(captured?.url).toBe(
+    expect(captured.map(({ url }) => url)).toEqual([
       `https://api.github.com/repos/owner/repo/commits/${"a".repeat(40)}`,
-    );
-    expect(captured?.headers.get("authorization")).toBe(null);
+      `https://api.github.com/repos/owner/repo/commits/${"b".repeat(40)}`,
+      "https://api.github.com/repos/owner/repo",
+    ]);
+    expect(captured.every(({ headers }) => headers.get("authorization") === null)).toBe(true);
     expect(result).toEqual({
       status: "AUTHORIZED_COMMIT_RECEIPT",
       repository: "owner/repo",
+      subtree: "src",
       childSha: "a".repeat(40),
       parentSha: "b".repeat(40),
+      childTreeSha,
+      parentTreeSha,
+      repositoryId: repositoryMetadata.repositoryId,
+      repositoryMetadataHash: canonicalSha256(repositoryMetadata),
+      licenseIdentifier: "MIT",
+      commit: {
+        author: { name: "Developer", login: "developer", type: "User" },
+        committer: { name: "Developer", login: "developer", type: "User" },
+        verification: { verified: true, reason: "valid" },
+        message: commitMessage,
+      },
       responseDate: githubDate,
       purpose,
       repositoryPolicyHash: canonicalSha256(fixture.controls.repositoryPolicy),
@@ -292,6 +344,15 @@ describe("operator-only acquisition command", () => {
       async () => new Response(JSON.stringify({
         sha: "a".repeat(40),
         parents: [{ sha: "b".repeat(40) }],
+        commit: {
+          message: commitMessage,
+          tree: { sha: childTreeSha },
+          verification: { verified: true, reason: "valid" },
+          author: { name: "Developer" },
+          committer: { name: "Developer" },
+        },
+        author: { login: "developer", type: "User" },
+        committer: { login: "developer", type: "User" },
       }), { headers: { date: "Thu, 01 Jan 2026 00:06:00 GMT" } }),
     ) as never).catch((failure) => failure);
     expect(skew.message).toBe("RECEIPT_AUTHORIZATION_REJECTED");

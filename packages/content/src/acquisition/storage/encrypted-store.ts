@@ -220,7 +220,10 @@ const putObject = async (context: StoreContext, { identity, plaintext }: PutInpu
     if (existing !== undefined) {
       if (existing.isSymbolicLink()) fail("SYMLINK_REJECTED");
       await readObject(context, identity);
-      return Object.freeze({ identity: Object.freeze({ ...identity }) });
+      return Object.freeze({
+        identity: Object.freeze({ ...identity }),
+        created: false as const,
+      });
     }
     const temporary = join(context.staging, `${identity.objectId}.${randomBytes(12).toString("hex")}.tmp`);
     const reservation = `${destination}.lock`;
@@ -255,7 +258,29 @@ const putObject = async (context: StoreContext, { identity, plaintext }: PutInpu
       if (!published) await unlink(temporary).catch(() => undefined);
     }
     await readObject(context, identity);
-    return Object.freeze({ identity: Object.freeze({ ...identity }) });
+    return Object.freeze({
+      identity: Object.freeze({ ...identity }),
+      created: true as const,
+    });
+};
+const removeObject = async (
+  context: StoreContext,
+  identity: SnapshotIdentity,
+): Promise<boolean> => {
+  validateIdentity(identity);
+  await verifyRoots(context);
+  const path = join(context.objects, `${identity.objectId}.enc`);
+  const existing = await lstat(path).catch(() => undefined);
+  if (existing === undefined) return false;
+  if (existing.isSymbolicLink()) fail("SYMLINK_REJECTED");
+  await readObject(context, identity);
+  await verifyRoots(context);
+  await unlink(path);
+  await verifyRoots(context);
+  if (await lstat(path).catch(() => undefined) !== undefined) fail("DELETE_UNVERIFIED");
+  const directory = await open(context.objects, constants.O_RDONLY);
+  try { await directory.sync(); } finally { await directory.close(); }
+  return true;
 };
 const buildEncryptedStore = async (config: StoreConfig) => {
   const paths = await initializeRoot(config);
@@ -264,7 +289,9 @@ const buildEncryptedStore = async (config: StoreConfig) => {
     categorical(() => readObject(context, identity), "READ_REJECTED");
   const put = (input: PutInput) =>
     categorical(() => putObject(context, input), "WRITE_REJECTED");
-  return Object.freeze({ put, read });
+  const remove = (identity: SnapshotIdentity) =>
+    categorical(() => removeObject(context, identity), "DELETE_REJECTED");
+  return Object.freeze({ put, read, remove });
 };
 
 export const openEncryptedStore = (config: StoreConfig) =>

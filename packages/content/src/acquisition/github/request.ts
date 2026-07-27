@@ -45,7 +45,7 @@ const REPOSITORY =
   /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/u;
 const SUBTREE_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 const ALLOWED_ENDPOINT =
-  /^https:\/\/api\.github\.com\/repos\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/(?:commits\/[0-9a-f]{40}|git\/(?:trees|blobs)\/[0-9a-f]{40})$/u;
+  /^https:\/\/api\.github\.com\/repos\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?(?:\/(?:commits\/[0-9a-f]{40}|git\/(?:trees|blobs)\/[0-9a-f]{40}))?$/u;
 
 type RawRequest = {
   readonly commit: string;
@@ -126,6 +126,12 @@ export const buildCommitEndpoint = (request: AcquisitionRequest): GitHubEndpoint
   validateGitHubEndpoint(
     `https://api.github.com/repos/${request.repository}/commits/${request.commit}`,
   );
+
+export const buildRepositoryEndpoint = (
+  request: AcquisitionRequest,
+): GitHubEndpoint => validateGitHubEndpoint(
+  `https://api.github.com/repos/${request.repository}`,
+);
 
 export const buildGitObjectEndpoint = (
   request: AcquisitionRequest,

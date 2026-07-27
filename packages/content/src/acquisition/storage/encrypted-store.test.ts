@@ -35,14 +35,28 @@ describe("external encrypted snapshot store", () => {
       const first = await store.put({ identity, plaintext });
       const path = join(root, "objects", `${identity.objectId}.enc`);
       const before = await stat(path);
-      expect(first).toEqual({ identity });
+      expect(first).toEqual({ identity, created: true });
       expect((await stat(root)).mode & 0o777).toBe(0o700);
       expect((await stat(join(root, "objects"))).mode & 0o777).toBe(0o700);
       expect(before.mode & 0o777).toBe(0o600);
       expect((await readFile(path)).includes(Buffer.from(plaintext))).toBe(false);
-      await store.put({ identity, plaintext });
+      expect(await store.put({ identity, plaintext })).toEqual({ identity, created: false });
       expect((await stat(path)).mtimeMs).toBe(before.mtimeMs);
       expect(await store.read(identity)).toEqual(plaintext);
+    });
+  });
+
+  it("removes only the exact authenticated object and verifies its absence", async () => {
+    await withRoot(async (root) => {
+      const plaintext = new TextEncoder().encode("rollback source");
+      const identity = identityFor(plaintext);
+      const store = await open(root);
+      await store.put({ identity, plaintext });
+      expect(await store.remove(identity)).toBe(true);
+      await expect(store.read(identity)).rejects.toThrow("OBJECT_NOT_FOUND");
+      expect(await store.remove(identity)).toBe(false);
+      await expect(store.remove({ ...identity, objectId: "b".repeat(64) }))
+        .rejects.toThrow("IDENTITY_REJECTED");
     });
   });
 
