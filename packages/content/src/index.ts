@@ -6,12 +6,16 @@ export {
   parseStackOverflowEvidenceRecord,
 } from "./evidence/records";
 export type {
+  AcquisitionPurpose,
   CommonEvidenceRecord,
   EvidenceRecord,
   EvidenceSourceClass,
   ImmutableEvidenceReference,
+  LanguageMarkerDecision,
+  LicensedGitHubEvidenceRecord,
   ModelOutputEvidenceRecord,
   ProjectOwnedHumanEvidenceRecord,
+  RecordedMarkerEvidence,
   StackOverflowEvidenceRecord,
 } from "./evidence/records";
 export { createPublicationEligibility } from "./review/publication-eligibility";

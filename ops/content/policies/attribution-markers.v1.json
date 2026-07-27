@@ -1,0 +1,30 @@
+{
+  "policyClass": "ATTRIBUTION_MARKER",
+  "policyVersion": "attribution-markers-v1-blocked",
+  "status": "NON_EFFECTIVE_PENDING_VENDOR_CAPTURE_AND_DATED_APPROVALS",
+  "markerRules": [],
+  "nonEffectiveCandidates": [
+    {
+      "publisher": "Anthropic",
+      "repository": "mysterionrise/encrypted-information-retrieval",
+      "commit": "33d5980f6b21fe7fb2df693bbb92ba4145866ffb",
+      "observedGitRepresentation": "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+      "permittedClassification": null,
+      "blocker": "The signed evidence does not contain a captured vendor URL, capture date, content hash, applicable product version, and dated policy approvals."
+    }
+  ],
+  "requiredVendorDocumentFields": [
+    "publisher",
+    "url",
+    "captureDate",
+    "contentSha256",
+    "applicableProductVersion",
+    "expectedGitRepresentation",
+    "permittedClassification"
+  ],
+  "permittedClassifications": [
+    "NAMED_MODEL_RECORDED",
+    "AGENT_RECORDED"
+  ],
+  "authorizationEvidence": []
+}

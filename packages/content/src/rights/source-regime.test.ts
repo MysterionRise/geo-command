@@ -4,7 +4,6 @@ import {
   type RightsDeterminationInput,
   type StackOverflowItemIdentity,
 } from "./source-regime";
-
 interface Expectation {
   toBe(expected: unknown): void;
   toEqual(expected: unknown): void;
@@ -12,25 +11,20 @@ interface Expectation {
   toThrow(expected?: string | RegExp): void;
   toThrowError(expected?: unknown): void;
 }
-
 interface Each {
   <T>(cases: readonly T[]): (name: string, callback: (value: T) => unknown) => void;
 }
-
 interface TestFunction {
   (name: string, callback: () => unknown): void;
   readonly each: Each;
 }
-
 interface TestApi {
   readonly describe: (name: string, callback: () => unknown) => void;
   readonly expect: (actual: unknown) => Expectation;
   readonly it: TestFunction;
 }
-
 const testModuleName: string = "vitest";
 const { describe, expect, it } = (await import(testModuleName)) as TestApi;
-
 const item: StackOverflowItemIdentity = {
   postId: "post-17",
   revisionId: "revision-4",
@@ -40,7 +34,6 @@ const item: StackOverflowItemIdentity = {
   interactionDesignVersion: "interaction-3",
   firstDisplayAttributionRequired: false,
 };
-
 const determination = (): RightsDeterminationInput => ({
   determinationId: "determination-1",
   writtenText: "Reveal attribution satisfies the covered license for this design.",
@@ -69,15 +62,44 @@ const determination = (): RightsDeterminationInput => ({
     signature: "signed-determination-1",
   },
 });
-
 describe("source regime rights gate", () => {
+  it("selects the recorded-agent versus project-controlled regime", () => {
+    const control = SourceRegimeControl.select({
+      versionId: "provenance-source-regime-v7",
+      selectedAt: "2026-08-02T00:00:00.000Z",
+      selection: "licensed-github-vs-project-controlled",
+    } as never);
+    expect(control.active).toMatchObject({
+      selection: "licensed-github-vs-project-controlled",
+      prompt: "Is an AI coding agent durably recorded as participating in this code change?",
+      candidateCount: 2,
+      allowedSourceClasses: ["licensed-github", "project-owned-human"],
+    });
+    expect(control.allowsCandidate({
+      answer: "RECORDED_AGENT_PARTICIPATION",
+      sourceClass: "licensed-github",
+      markerClassification: "AGENT_RECORDED",
+    })).toBe(true);
+    expect(control.allowsCandidate({
+      answer: "PROJECT_CONTROLLED_HUMAN_ONLY",
+      sourceClass: "project-owned-human",
+      creationOrCommissionBasis: "commissioned",
+      recordedProjectAuthorization: "authorization-1",
+      noAgentParticipationAttestation: "No AI coding agent participated.",
+    })).toBe(true);
+    expect(control.allowsCandidate({
+      answer: "PROJECT_CONTROLLED_HUMAN_ONLY",
+      sourceClass: "project-owned-human",
+      creationOrCommissionBasis: "commissioned",
+      recordedProjectAuthorization: "authorization-1",
+    })).toBe(false);
+  });
   it("selects the exclusive human-and-model fallback without a determination", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-1",
       selectedAt: "2026-08-02T00:00:00.000Z",
       selection: "project-owned-fallback",
     });
-
     expect(control.active.allowedSourceClasses).toEqual([
       "project-owned-human",
       "model-output",
@@ -86,7 +108,6 @@ describe("source regime rights gate", () => {
     expect(control.stackOverflowItemEligible(item)).toBe(false);
     expect(control.active.determination).toBe(null);
   });
-
   it("rejects Stack Overflow selection without an explicit determination", () => {
     expect(() => SourceRegimeControl.select({
       versionId: "regime-1",
@@ -96,7 +117,6 @@ describe("source regime rights gate", () => {
       "stack-overflow-enabled requires an affirmative written determination",
     ));
   });
-
   it.each([
     "determinationId",
     "writtenText",
@@ -118,7 +138,6 @@ describe("source regime rights gate", () => {
       determination: incomplete,
     })).toThrow(field);
   });
-
   it("requires an affirmative delayed-attribution decision with no first-display duty", () => {
     expect(() => SourceRegimeControl.select({
       versionId: "regime-1",
@@ -133,7 +152,6 @@ describe("source regime rights gate", () => {
       determination: { ...determination(), firstDisplayAttributionRequired: true },
     })).toThrow("firstDisplayAttributionRequired must be false");
   });
-
   it("validates the approving role and recorded signature at runtime", () => {
     expect(() => SourceRegimeControl.select({
       versionId: "regime-1",
@@ -154,7 +172,6 @@ describe("source regime rights gate", () => {
       },
     })).toThrow("approval.signature");
   });
-
   it("enables only an item exactly covered by the affirmative determination", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-2",
@@ -162,13 +179,11 @@ describe("source regime rights gate", () => {
       selection: "stack-overflow-enabled",
       determination: determination(),
     });
-
     expect(control.stackOverflowItemEligible(item)).toBe(true);
     expect(control.allowsSourceClass("project-owned-human")).toBe(false);
     expect(Object.isFrozen(control.active)).toBe(true);
     expect(Object.isFrozen(control.active.determination?.coveredItems)).toBe(true);
   });
-
   it.each([
     { field: "postId", value: "post-18" },
     { field: "revisionId", value: "revision-5" },
@@ -183,10 +198,8 @@ describe("source regime rights gate", () => {
       selection: "stack-overflow-enabled",
       determination: determination(),
     });
-
     expect(control.stackOverflowItemEligible({ ...item, [field]: value })).toBe(false);
   });
-
   it("excludes an item requiring attribution on first display", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-2",
@@ -199,7 +212,6 @@ describe("source regime rights gate", () => {
       firstDisplayAttributionRequired: true,
     })).toBe(false);
   });
-
   it("excludes an item missing its first-display attribution decision", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-2",
@@ -215,19 +227,16 @@ describe("source regime rights gate", () => {
       presentationDesignVersion: item.presentationDesignVersion,
       interactionDesignVersion: item.interactionDesignVersion,
     };
-
     expect(control.stackOverflowItemEligible(
       incomplete as StackOverflowItemIdentity,
     )).toBe(false);
   });
-
   it("freezes the one active regime version when invitations start", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-1",
       selectedAt: "2026-08-02T00:00:00.000Z",
       selection: "project-owned-fallback",
     }).startInvitations("2026-08-03T00:00:00.000Z");
-
     expect(control.invitationsStartedAt).toBe("2026-08-03T00:00:00.000Z");
     expect(() => control.replace({
       versionId: "regime-2",
@@ -237,7 +246,6 @@ describe("source regime rights gate", () => {
     })).toThrow("source regime cannot change after invitations start");
     expect(control.active.versionId).toBe("regime-1");
   });
-
   it("rejects selection before the Don approval was signed", () => {
     expect(() => SourceRegimeControl.select({
       versionId: "regime-2",
@@ -246,7 +254,6 @@ describe("source regime rights gate", () => {
       determination: determination(),
     })).toThrow("selectedAt must not precede approval.signedAt");
   });
-
   it("rejects selection before the determination effective date", () => {
     const rights = determination();
     expect(() => SourceRegimeControl.select({
@@ -259,14 +266,12 @@ describe("source regime rights gate", () => {
       },
     })).toThrow("selectedAt must not precede determination.effectiveDate");
   });
-
   it("rejects invitation start before regime selection", () => {
     const control = SourceRegimeControl.select({
       versionId: "regime-1",
       selectedAt: "2026-08-02T00:00:00.000Z",
       selection: "project-owned-fallback",
     });
-
     expect(() => control.startInvitations("2026-08-01T23:59:59.000Z")).toThrow(
       "invitationsStartedAt must not precede selectedAt",
     );

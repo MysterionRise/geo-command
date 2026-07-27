@@ -1,32 +1,24 @@
-export type ProvenanceSourceClass =
-  | "model-output"
-  | "project-owned-human"
-  | "stack-overflow";
-
-export type SourceRegimeSelection =
-  | "project-owned-fallback"
-  | "stack-overflow-enabled";
-
+export type ProvenanceSourceClass = "model-output" | "project-owned-human" | "stack-overflow"
+  | "licensed-github";
+export type SourceRegimeSelection = "project-owned-fallback" | "stack-overflow-enabled"
+  | "licensed-github-vs-project-controlled";
 export interface ProvenanceCandidateInput {
   id: string;
   sourceClass: ProvenanceSourceClass;
   label: string;
 }
-
 export interface SourceRegimeApprovalSnapshot {
   readonly role: "Don";
   readonly signerId: string;
   readonly signedAt: string;
   readonly signature: string;
 }
-
 export interface CoveredItemSnapshot {
   readonly postId: string;
   readonly revisionId: string;
   readonly licenseName: string;
   readonly licenseVersion: string;
 }
-
 export interface SourceRegimeDeterminationSnapshot {
   readonly determinationId: string;
   readonly writtenText: string;
@@ -45,20 +37,20 @@ export interface SourceRegimeDeterminationSnapshot {
   readonly coveredItems: readonly CoveredItemSnapshot[];
   readonly approval: SourceRegimeApprovalSnapshot;
 }
-
 export interface SourceRegimeSnapshotInput {
   readonly versionId: string;
   readonly selectedAt: string;
   readonly selection: SourceRegimeSelection;
   readonly allowedSourceClasses: readonly ProvenanceSourceClass[];
   readonly determination: SourceRegimeDeterminationSnapshot | null;
+  readonly prompt?: "Is an AI coding agent durably recorded as participating in this code change?";
+  readonly candidateCount?: 2;
+  readonly inactiveSourceClasses?: readonly string[];
 }
-
 export interface ProvenanceRegimeInput {
   readonly sourceRegime: unknown;
   readonly candidates: readonly unknown[];
 }
-
 export interface ProvenanceRegime {
   readonly versionId: string;
   readonly selectedAt: string;
@@ -66,14 +58,12 @@ export interface ProvenanceRegime {
   readonly candidates: readonly Readonly<ProvenanceCandidateInput>[];
   readonly sourceRegime: SourceRegimeSnapshotInput;
 }
-
 export class ProvenanceRegimeRuleError extends Error {
   public constructor(message: string) {
     super(message);
     this.name = "ProvenanceRegimeRuleError";
   }
 }
-
 const EXPECTED_CLASSES = Object.freeze({
   "project-owned-fallback": Object.freeze<ProvenanceSourceClass[]>([
     "project-owned-human", "model-output",
@@ -81,28 +71,34 @@ const EXPECTED_CLASSES = Object.freeze({
   "stack-overflow-enabled": Object.freeze<ProvenanceSourceClass[]>([
     "model-output", "stack-overflow",
   ]),
+  "licensed-github-vs-project-controlled": Object.freeze<ProvenanceSourceClass[]>([
+    "licensed-github", "project-owned-human",
+  ]),
 });
-
 const LABELS: Readonly<Record<ProvenanceSourceClass, string>> = Object.freeze({
   "model-output": "Recorded model output",
   "project-owned-human": "Project-owned human sample",
   "stack-overflow": "Recorded Stack Overflow publication",
+  "licensed-github": "RECORDED_AGENT_PARTICIPATION",
 });
-
+const ACTIVE_SELECTION = "licensed-github-vs-project-controlled";
+const ACTIVE_PROMPT =
+  "Is an AI coding agent durably recorded as participating in this code change?";
+const INACTIVE_CLASSES = Object.freeze([
+  "stack-overflow", "model-output", "synthetic", "missing-marker-github",
+]);
 const record = (value: unknown, field: string): Record<string, unknown> => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ProvenanceRegimeRuleError(`${field} must be an object`);
   }
   return value as Record<string, unknown>;
 };
-
 const text = (value: unknown, field: string): string => {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ProvenanceRegimeRuleError(`${field} must be a non-blank string`);
   }
   return value.trim();
 };
-
 const instant = (value: unknown, field: string): string => {
   const parsed = text(value, field);
   if (!Number.isFinite(Date.parse(parsed))) {
@@ -110,7 +106,6 @@ const instant = (value: unknown, field: string): string => {
   }
   return parsed;
 };
-
 const date = (value: unknown, field: string): string => {
   const parsed = text(value, field);
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(parsed) || !Number.isFinite(Date.parse(`${parsed}T00:00:00Z`))) {
@@ -118,13 +113,11 @@ const date = (value: unknown, field: string): string => {
   }
   return parsed;
 };
-
 const requireFrozen = (value: object, field: string): void => {
   if (!Object.isFrozen(value)) {
     throw new ProvenanceRegimeRuleError(`${field} must be frozen`);
   }
 };
-
 const frozenTexts = (value: unknown, field: string): readonly string[] => {
   if (!Array.isArray(value) || value.length === 0) {
     throw new ProvenanceRegimeRuleError(`${field} must be a non-empty array`);
@@ -132,7 +125,6 @@ const frozenTexts = (value: unknown, field: string): readonly string[] => {
   requireFrozen(value, field);
   return Object.freeze(value.map((entry, index) => text(entry, `${field}[${index}]`)));
 };
-
 const parseApproval = (value: unknown): SourceRegimeApprovalSnapshot => {
   const input = record(value, "determination.approval");
   requireFrozen(input, "determination.approval");
@@ -146,7 +138,6 @@ const parseApproval = (value: unknown): SourceRegimeApprovalSnapshot => {
     signature: text(input.signature, "determination.approval.signature"),
   });
 };
-
 const parseCoveredItems = (value: unknown): readonly CoveredItemSnapshot[] => {
   if (!Array.isArray(value) || value.length === 0) {
     throw new ProvenanceRegimeRuleError("determination.coveredItems must be non-empty");
@@ -163,7 +154,6 @@ const parseCoveredItems = (value: unknown): readonly CoveredItemSnapshot[] => {
     });
   }));
 };
-
 const parseDetermination = (value: unknown): SourceRegimeDeterminationSnapshot => {
   const input = record(value, "determination");
   requireFrozen(input, "determination");
@@ -201,24 +191,42 @@ const parseDetermination = (value: unknown): SourceRegimeDeterminationSnapshot =
     approval: parseApproval(input.approval),
   });
 };
-
 const parseSnapshot = (value: unknown): SourceRegimeSnapshotInput => {
   const input = record(value, "sourceRegime");
   requireFrozen(input, "sourceRegime");
   const selection = input.selection;
-  if (selection !== "project-owned-fallback" && selection !== "stack-overflow-enabled") {
+  if (typeof selection !== "string" || !(selection in EXPECTED_CLASSES)) {
     throw new ProvenanceRegimeRuleError("sourceRegime.selection is unknown");
   }
+  const knownSelection = selection as SourceRegimeSelection;
   const versionId = text(input.versionId, "sourceRegime.versionId");
   const selectedAt = instant(input.selectedAt, "sourceRegime.selectedAt");
   const classes = frozenTexts(input.allowedSourceClasses, "sourceRegime.allowedSourceClasses");
-  if (classes.join("|") !== EXPECTED_CLASSES[selection].join("|")) {
+  if (classes.join("|") !== EXPECTED_CLASSES[knownSelection].join("|")) {
     throw new ProvenanceRegimeRuleError("allowed source classes do not match selection");
   }
-  const determination = selection === "project-owned-fallback"
+  if (knownSelection === ACTIVE_SELECTION) {
+    if (input.prompt !== ACTIVE_PROMPT || input.candidateCount !== 2 ||
+      input.determination !== null) {
+      throw new ProvenanceRegimeRuleError("active provenance snapshot is inconsistent");
+    }
+    const inactive = frozenTexts(
+      input.inactiveSourceClasses, "sourceRegime.inactiveSourceClasses",
+    );
+    if (inactive.join("|") !== INACTIVE_CLASSES.join("|")) {
+      throw new ProvenanceRegimeRuleError("inactive source classes do not match");
+    }
+    return Object.freeze({
+      versionId, selectedAt, selection: knownSelection,
+      allowedSourceClasses: Object.freeze(classes as ProvenanceSourceClass[]),
+      determination: null, prompt: ACTIVE_PROMPT, candidateCount: 2,
+      inactiveSourceClasses: inactive,
+    });
+  }
+  const determination = knownSelection === "project-owned-fallback"
     ? null
     : parseDetermination(input.determination);
-  if (selection === "project-owned-fallback" && input.determination !== null) {
+  if (knownSelection === "project-owned-fallback" && input.determination !== null) {
     throw new ProvenanceRegimeRuleError("fallback determination must be null");
   }
   if (determination && (
@@ -226,18 +234,17 @@ const parseSnapshot = (value: unknown): SourceRegimeSnapshotInput => {
     Date.parse(selectedAt) < Date.parse(`${determination.effectiveDate}T00:00:00Z`)
   )) throw new ProvenanceRegimeRuleError("source regime predates its determination");
   return Object.freeze({
-    versionId, selectedAt, selection,
+    versionId, selectedAt, selection: knownSelection,
     allowedSourceClasses: Object.freeze(classes as ProvenanceSourceClass[]),
     determination,
   });
 };
-
 const canonical = (value: string): string =>
   value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase("en");
-
 const parseCandidates = (
   value: unknown,
   classes: readonly ProvenanceSourceClass[],
+  selection: SourceRegimeSelection,
 ): readonly Readonly<ProvenanceCandidateInput>[] => {
   if (!Array.isArray(value) || value.length !== classes.length) {
     throw new ProvenanceRegimeRuleError("candidates must exactly match allowed source classes");
@@ -250,11 +257,18 @@ const parseCandidates = (
       throw new ProvenanceRegimeRuleError("candidate order must match allowed source classes");
     }
     const label = text(input.label, `candidates[${index}].label`);
-    if (label !== LABELS[expectedClass]) {
+    const fixedAnswer = selection === ACTIVE_SELECTION
+      ? ["RECORDED_AGENT_PARTICIPATION", "PROJECT_CONTROLLED_HUMAN_ONLY"][index]
+      : null;
+    if (label !== (fixedAnswer ?? LABELS[expectedClass])) {
       throw new ProvenanceRegimeRuleError("candidate label must state its recorded source");
     }
+    const id = text(input.id, `candidates[${index}].id`);
+    if (fixedAnswer !== null && id !== fixedAnswer) {
+      throw new ProvenanceRegimeRuleError("candidate id must match the fixed answer");
+    }
     return Object.freeze({
-      id: text(input.id, `candidates[${index}].id`),
+      id,
       sourceClass: expectedClass,
       label,
     });
@@ -267,11 +281,12 @@ const parseCandidates = (
   }
   return candidates;
 };
-
 export const createProvenanceRegime = (value: unknown): ProvenanceRegime => {
   const input = record(value, "input");
   const sourceRegime = parseSnapshot(input.sourceRegime);
-  const candidates = parseCandidates(input.candidates, sourceRegime.allowedSourceClasses);
+  const candidates = parseCandidates(
+    input.candidates, sourceRegime.allowedSourceClasses, sourceRegime.selection,
+  );
   return Object.freeze({
     versionId: sourceRegime.versionId,
     selectedAt: sourceRegime.selectedAt,

@@ -13,6 +13,9 @@ interface Expectation {
 }
 
 interface Each {
+  <T extends readonly unknown[]>(
+    cases: readonly T[],
+  ): (name: string, callback: (...value: [...T]) => unknown) => void;
   <T>(cases: readonly T[]): (name: string, callback: (value: T) => unknown) => void;
 }
 
@@ -91,6 +94,95 @@ const projectOwnedHumanRecord = {
   sourceClass: "project-owned-human",
   creationOrCommissionBasis: "commissioned under contributor agreement",
   recordedProjectAuthorization: "authorization-001",
+} as const;
+
+const gitSha = (character: string): string => character.repeat(40);
+const sha256 = (character: string): string => character.repeat(64);
+
+const licensedGitHubRecord = {
+  ...commonRecord,
+  sourceClass: "licensed-github",
+  repository: {
+    owner: "example-owner",
+    name: "example-repository",
+    immutableId: "repository-123",
+  },
+  revision: {
+    childCommitSha: gitSha("1"),
+    parentCommitSha: gitSha("2"),
+    childTreeSha: gitSha("3"),
+    parentTreeSha: gitSha("4"),
+    approvedSubtree: "src",
+    path: "src/example.ts",
+    childBlobSha: gitSha("5"),
+    parentBlobSha: gitSha("6"),
+    sourceUrl: `https://github.com/example-owner/example-repository/blob/${gitSha("1")}/src/example.ts`,
+    commitUrl: `https://github.com/example-owner/example-repository/commit/${gitSha("1")}`,
+    childRawSha256: sha256("a"),
+    parentRawSha256: sha256("b"),
+    childNormalizedSha256: sha256("c"),
+    parentNormalizedSha256: sha256("d"),
+  },
+  acquisition: {
+    purpose: "RECORDED_AGENT_PARTICIPATION_CANDIDATE",
+    observationTime: "2026-07-27T12:00:00Z",
+    authoritativeReceiptTime: "2026-07-27T12:00:01Z",
+    repositoryMetadataSnapshotHash: sha256("e"),
+    draftIdentifier: "draft-001",
+  },
+  license: {
+    identifier: "MIT",
+    filePath: "LICENSE",
+    blobSha: gitSha("7"),
+    textHash: sha256("f"),
+    repositoryAdmissionPolicyVersion: "repository-policy-v1",
+    repositoryAdmissionPolicyHash: sha256("8"),
+  },
+  marker: {
+    status: "accepted",
+    attributionMarkerPolicyVersion: "marker-policy-v1",
+    attributionMarkerPolicyHash: sha256("9"),
+    classification: "AGENT_RECORDED",
+    recordedModelName: null,
+    policyRule: "vendor-agent-trailer-v1",
+    commitAuthor: "Example Author <author@example.invalid>",
+    committer: "Example Committer <committer@example.invalid>",
+    signatureVerificationResult: "verified",
+    commitMessageHash: sha256("0"),
+    parsedMarker: "Co-Authored-By: Example Agent",
+    vendorSessionReference: "https://vendor.example/sessions/123",
+  },
+  screeningOutcomes: [
+    { screen: "binary", result: "passed" },
+    { screen: "secret-like-material", result: "passed" },
+  ],
+  storage: {
+    rawSnapshotIdentifiers: ["snapshot-commit-001", "snapshot-blob-001"],
+    retentionDeadline: "2026-08-26T12:00:01Z",
+  },
+  rights: {
+    fileCoverageDecision: "approved",
+    noticeDecision: "include approved MIT notice at reveal",
+    redistributionDecision: "approved for excerpt display",
+    attributionTimingDecision: "approved for reveal",
+  },
+  lineage: {
+    reviewLineage: "review-lineage-001",
+    promotionIdentifier: "promotion-001",
+  },
+  policyAuthorization: {
+    approvedPolicyRegisterVersion: "approved-policy-register-v1",
+    approvedPolicyRegisterHash: sha256("1"),
+    authorizingEntryIdentifiers: [
+      "repository-policy-entry-001",
+      "marker-policy-entry-001",
+    ],
+  },
+  operatorAuthorization: {
+    registerVersion: "operator-register-v1",
+    registerHash: sha256("2"),
+    entryIdentifier: "operator-entry-001",
+  },
 } as const;
 
 const commonRequiredFields = [
@@ -222,6 +314,251 @@ describe("evidence records", () => {
     projectOwnedHumanRecord,
   ] as const)("dispatches a supported source-specific record", (record) => {
     expect(parseEvidenceRecord(record)).toEqual(record);
+  });
+
+  it("parses a complete licensed GitHub record and deeply freezes it", () => {
+    const parsed = parseEvidenceRecord(licensedGitHubRecord);
+
+    expect(parsed).toEqual(licensedGitHubRecord);
+    for (const value of [
+      parsed,
+      parsed.evidenceReference,
+      parsed.reviewerIdentities,
+      parsed.reviewerDates,
+      "repository" in parsed ? parsed.repository : null,
+      "revision" in parsed ? parsed.revision : null,
+      "acquisition" in parsed ? parsed.acquisition : null,
+      "license" in parsed ? parsed.license : null,
+      "marker" in parsed ? parsed.marker : null,
+      "screeningOutcomes" in parsed ? parsed.screeningOutcomes : null,
+      "screeningOutcomes" in parsed ? parsed.screeningOutcomes[0] : null,
+      "storage" in parsed ? parsed.storage : null,
+      "storage" in parsed ? parsed.storage.rawSnapshotIdentifiers : null,
+      "rights" in parsed ? parsed.rights : null,
+      "lineage" in parsed ? parsed.lineage : null,
+      "policyAuthorization" in parsed ? parsed.policyAuthorization : null,
+      "policyAuthorization" in parsed
+        ? parsed.policyAuthorization.authorizingEntryIdentifiers
+        : null,
+      "operatorAuthorization" in parsed ? parsed.operatorAuthorization : null,
+    ]) {
+      expect(value === null || Object.isFrozen(value)).toBe(true);
+    }
+  });
+
+  it.each([
+    "repository",
+    "revision",
+    "acquisition",
+    "license",
+    "marker",
+    "screeningOutcomes",
+    "storage",
+    "rights",
+    "lineage",
+    "policyAuthorization",
+    "operatorAuthorization",
+  ] as const)("rejects licensed GitHub evidence missing %s", (field) => {
+    expect(() => parseEvidenceRecord(withoutField(licensedGitHubRecord, field))).toThrow(field);
+  });
+
+  it.each([
+    ...["owner", "name", "immutableId"].map((field) => ["repository", field] as const),
+    ...[
+      "childCommitSha", "parentCommitSha", "childTreeSha", "parentTreeSha",
+      "approvedSubtree", "path", "childBlobSha", "parentBlobSha", "sourceUrl",
+      "commitUrl", "childRawSha256", "parentRawSha256", "childNormalizedSha256",
+      "parentNormalizedSha256",
+    ].map((field) => ["revision", field] as const),
+    ...[
+      "purpose", "observationTime", "authoritativeReceiptTime",
+      "repositoryMetadataSnapshotHash", "draftIdentifier",
+    ].map((field) => ["acquisition", field] as const),
+    ...[
+      "identifier", "filePath", "blobSha", "textHash",
+      "repositoryAdmissionPolicyVersion", "repositoryAdmissionPolicyHash",
+    ].map((field) => ["license", field] as const),
+    ...[
+      "status", "attributionMarkerPolicyVersion", "attributionMarkerPolicyHash",
+      "classification", "recordedModelName", "policyRule", "commitAuthor", "committer",
+      "signatureVerificationResult", "commitMessageHash", "parsedMarker",
+      "vendorSessionReference",
+    ].map((field) => ["marker", field] as const),
+    ...["rawSnapshotIdentifiers", "retentionDeadline"].map(
+      (field) => ["storage", field] as const,
+    ),
+    ...[
+      "fileCoverageDecision", "noticeDecision", "redistributionDecision",
+      "attributionTimingDecision",
+    ].map((field) => ["rights", field] as const),
+    ...["reviewLineage", "promotionIdentifier"].map(
+      (field) => ["lineage", field] as const,
+    ),
+    ...[
+      "approvedPolicyRegisterVersion", "approvedPolicyRegisterHash",
+      "authorizingEntryIdentifiers",
+    ].map((field) => ["policyAuthorization", field] as const),
+    ...["registerVersion", "registerHash", "entryIdentifier"].map(
+      (field) => ["operatorAuthorization", field] as const,
+    ),
+  ] as const)("rejects licensed GitHub evidence missing %s.%s", (section, field) => {
+    const nested = licensedGitHubRecord[section];
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      [section]: withoutField(nested, field),
+    })).toThrow(`${section}.${field}`);
+  });
+
+  it.each(["screen", "result"] as const)(
+    "rejects licensed GitHub evidence missing screeningOutcomes[0].%s",
+    (field) => {
+      expect(() => parseEvidenceRecord({
+        ...licensedGitHubRecord,
+        screeningOutcomes: [
+          withoutField(licensedGitHubRecord.screeningOutcomes[0], field),
+        ],
+      })).toThrow(`screeningOutcomes[0].${field}`);
+    },
+  );
+
+  it("rejects unknown fields instead of silently changing the evidence shape", () => {
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      branch: "main",
+    })).toThrow("unexpected field branch");
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      revision: { ...licensedGitHubRecord.revision, ref: "main" },
+    })).toThrow("unexpected field revision.ref");
+    expect(() => parseEvidenceRecord({
+      ...projectOwnedHumanRecord,
+      repository: licensedGitHubRecord.repository,
+    })).toThrow("unexpected field repository");
+  });
+
+  it.each([
+    {
+      section: "revision",
+      field: "childCommitSha",
+      value: "main",
+    },
+    {
+      section: "revision",
+      field: "childTreeSha",
+      value: gitSha("A"),
+    },
+    {
+      section: "revision",
+      field: "sourceUrl",
+      value: "https://github.com/example-owner/example-repository/blob/main/src/example.ts",
+    },
+    {
+      section: "acquisition",
+      field: "purpose",
+      value: "DISCOVER_REPOSITORIES",
+    },
+  ] as const)("rejects mutable or unsupported $section.$field", ({ section, field, value }) => {
+    const nested = licensedGitHubRecord[section];
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      [section]: { ...nested, [field]: value },
+    })).toThrow(`${section}.${field}`);
+  });
+
+  it("rejects a source path outside its approved subtree", () => {
+    const path = "packages/example.ts";
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      revision: {
+        ...licensedGitHubRecord.revision,
+        path,
+        sourceUrl: `https://github.com/example-owner/example-repository/blob/${gitSha("1")}/${path}`,
+      },
+    })).toThrow("revision.path must be inside revision.approvedSubtree");
+  });
+
+  it("rejects a license path that escapes the pinned tree", () => {
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      license: {
+        ...licensedGitHubRecord.license,
+        filePath: "../LICENSE",
+      },
+    })).toThrow("license.filePath");
+  });
+
+  it("preserves the language-only marker non-applicability decision", () => {
+    const marker = {
+      status: "language-only-not-applicable",
+      attributionMarkerPolicyVersion: "marker-policy-v1",
+      attributionMarkerPolicyHash: sha256("9"),
+      decision: "Marker evidence is not applicable to this language candidate.",
+    } as const;
+
+    const parsed = parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      acquisition: {
+        ...licensedGitHubRecord.acquisition,
+        purpose: "LANGUAGE_CANDIDATE",
+      },
+      marker,
+    });
+
+    expect("marker" in parsed ? parsed.marker : null).toEqual(marker);
+  });
+
+  it("preserves the exact recorded model name only for named-model evidence", () => {
+    const marker = {
+      ...licensedGitHubRecord.marker,
+      classification: "NAMED_MODEL_RECORDED",
+      recordedModelName: "Claude Sonnet 4",
+    } as const;
+
+    const parsed = parseEvidenceRecord({ ...licensedGitHubRecord, marker });
+
+    expect("marker" in parsed ? parsed.marker : null).toEqual(marker);
+  });
+
+  it.each([
+    {
+      classification: "AGENT_RECORDED",
+      recordedModelName: "Claude Sonnet 4",
+    },
+    {
+      classification: "NAMED_MODEL_RECORDED",
+      recordedModelName: null,
+    },
+  ] as const)(
+    "rejects a model-name claim inconsistent with $classification",
+    ({ classification, recordedModelName }) => {
+      expect(() => parseEvidenceRecord({
+        ...licensedGitHubRecord,
+        marker: {
+          ...licensedGitHubRecord.marker,
+          classification,
+          recordedModelName,
+        },
+      })).toThrow("marker.recordedModelName");
+    },
+  );
+
+  it("rejects marker evidence that does not match the acquisition purpose", () => {
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      acquisition: {
+        ...licensedGitHubRecord.acquisition,
+        purpose: "LANGUAGE_CANDIDATE",
+      },
+    })).toThrow("marker.status does not match acquisition.purpose");
+    expect(() => parseEvidenceRecord({
+      ...licensedGitHubRecord,
+      marker: {
+        status: "language-only-not-applicable",
+        attributionMarkerPolicyVersion: "marker-policy-v1",
+        attributionMarkerPolicyHash: sha256("9"),
+        decision: "Not applicable.",
+      },
+    })).toThrow("marker.status does not match acquisition.purpose");
   });
 
   it("rejects a common evidence reference without an immutable version identifier", () => {

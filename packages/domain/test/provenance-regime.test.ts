@@ -76,6 +76,40 @@ const create = (sourceRegime: SourceRegimeSnapshotInput) =>
   createProvenanceRegime({ sourceRegime, candidates: candidates(sourceRegime.selection) });
 
 describe("provenance source regime binding", () => {
+  it("binds the fixed recorded-agent question and answer pair", () => {
+    const sourceRegime = deepFreeze({
+      versionId: "provenance-source-regime-v7",
+      selectedAt: "2026-08-02T00:00:00.000Z",
+      selection: "licensed-github-vs-project-controlled",
+      prompt: "Is an AI coding agent durably recorded as participating in this code change?",
+      candidateCount: 2,
+      allowedSourceClasses: ["licensed-github", "project-owned-human"],
+      inactiveSourceClasses: [
+        "stack-overflow", "model-output", "synthetic", "missing-marker-github",
+      ],
+      determination: null,
+    });
+    const fixedCandidates = [
+      {
+        id: "RECORDED_AGENT_PARTICIPATION",
+        sourceClass: "licensed-github",
+        label: "RECORDED_AGENT_PARTICIPATION",
+      },
+      {
+        id: "PROJECT_CONTROLLED_HUMAN_ONLY",
+        sourceClass: "project-owned-human",
+        label: "PROJECT_CONTROLLED_HUMAN_ONLY",
+      },
+    ];
+    const regime = createProvenanceRegime({
+      sourceRegime,
+      candidates: fixedCandidates,
+    });
+
+    expect(regime.sourceRegime).toEqual(sourceRegime);
+    expect(regime.candidates).toEqual(fixedCandidates);
+  });
+
   it("rejects the former custom rights-gate shape", () => {
     expect(() => createProvenanceRegime({
       versionId: "weak-regime",

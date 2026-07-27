@@ -1,0 +1,77 @@
+{
+  "policyClass": "REPOSITORY_ADMISSION",
+  "policyVersion": "repository-admission-v1-blocked",
+  "status": "NON_EFFECTIVE_PENDING_DATED_APPROVALS",
+  "repositories": [],
+  "nonEffectiveCandidates": [
+    {
+      "repository": "mysterionrise/encrypted-information-retrieval",
+      "approvedSubtrees": [],
+      "blocker": "No signed Repository Admission Policy names an approved subtree or immutable repository identifier."
+    }
+  ],
+  "permittedPurposes": [
+    "LANGUAGE_CANDIDATE",
+    "RECORDED_AGENT_PARTICIPATION_CANDIDATE"
+  ],
+  "allowlistedLicenses": [
+    "MIT",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Apache-2.0"
+  ],
+  "licenseFileRules": {
+    "requireMetadataAllowlistMatch": true,
+    "requirePinnedCommitLicenseFile": true,
+    "requirePinnedLicenseBlobSha": true,
+    "requireLicenseTextSha256": true,
+    "rejectMissingNoAssertionCustomUnlistedOrConflicting": true,
+    "humanFileCoverageDecisionRequired": true
+  },
+  "pathExclusions": [
+    "absolute",
+    "path-traversal",
+    "symbolic-link",
+    "submodule",
+    "generated",
+    "vendored",
+    "minified",
+    "lockfile",
+    "documentation",
+    "metadata"
+  ],
+  "contentExclusions": [
+    "binary",
+    "unsupported-extension",
+    "deceptive-control",
+    "secret-like",
+    "suspicious-personal-data",
+    "duplicate",
+    "oversize",
+    "ambiguous"
+  ],
+  "transportLimits": {
+    "scheme": "https",
+    "host": "api.github.com",
+    "requestTimeoutSeconds": 15,
+    "automaticRetries": 0,
+    "maximumConcurrentRequests": 4,
+    "redirectsAllowed": false
+  },
+  "resourceLimits": {
+    "maximumRequests": 500,
+    "maximumTreeEntries": 10000,
+    "maximumSelectedBlobs": 200,
+    "maximumDecodedBlobBytes": 262144,
+    "maximumResponseBodyBytes": 52428800
+  },
+  "retention": {
+    "secretOrPersonalDataDeletionMaximumElapsedSeconds": 3600,
+    "otherRejectedDeletionMaximumElapsedSeconds": 86400,
+    "unresolvedDraftMaximumCalendarDays": 30,
+    "postReviewMaximumCalendarDays": 30,
+    "clock": "AUTHORITATIVE_RECEIPT_OR_FINAL_DECISION_TIME"
+  },
+  "authorizationEvidence": []
+}
