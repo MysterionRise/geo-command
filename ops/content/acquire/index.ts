@@ -5,16 +5,21 @@ import {
   authorizeOperatorRun,
   authorizePolicy,
   acquireAuthorizedCommitReceipt,
+  AcquisitionOrchestrationError,
   AuthorizedSourceError,
   BoundedGitHubTransport,
+  GitHubObjectAdapter,
+  orchestrateAcquisitionDraft,
   canonicalSha256,
   validateAcquisitionRequest,
   type AcquisitionRequest,
+  type AcquisitionOrchestrationInput,
   type AuthorizedOperatorRun,
   type AuthorizedPolicy,
   type OperatorAuthorizationInput,
   type PolicyAuthorizationInput,
 } from "@codeguessr/content/operator/acquisition";
+import { OperatorStateError, prepareOperatorState } from "./operator-state";
 
 type Json = Record<string, unknown>;
 type DescriptorOperatorAuthorization = Omit<
@@ -37,6 +42,7 @@ export interface AuthorizedExecution {
   readonly request: AcquisitionRequest;
   readonly repositoryPolicy: AuthorizedPolicy;
   readonly attributionPolicy: AuthorizedPolicy;
+  readonly attributionPolicyDocument: Readonly<Record<string, unknown>>;
   readonly operatorRun: AuthorizedOperatorRun;
   readonly operatorAuthorization: OperatorAuthorizationInput;
 }
@@ -46,6 +52,12 @@ interface Dependencies {
   fetch(request: Request): Promise<Response>;
   now(): number;
   osIdentity(): string;
+  prepareOperatorState?(): Promise<Readonly<{
+    open(operatorRun: AuthorizedOperatorRun): Promise<
+      Pick<AcquisitionOrchestrationInput, "store" | "audit">
+    >;
+    dispose(): void;
+  }>>;
 }
 export class OperatorCommandError extends Error {
   public constructor(code: string) { super(code); this.name = "OperatorCommandError"; }
@@ -211,6 +223,7 @@ export const authorizeExecutionDescriptor = (
   return Object.freeze({
     request, repositoryPolicy, attributionPolicy, operatorRun,
     operatorAuthorization,
+    attributionPolicyDocument: controls.attributionPolicy,
   });
 };
 export const runOperatorCommand = async (
@@ -227,19 +240,45 @@ export const runOperatorCommand = async (
   let execution: AuthorizedExecution;
   try { execution = authorizeExecutionDescriptor(raw, controls, receiptTime, osIdentity); }
   catch { return fail("AUTHORIZATION_REJECTED"); }
-  const transport = new BoundedGitHubTransport({ fetch: dependencies.fetch });
+  const preparedState = dependencies.prepareOperatorState === undefined
+    ? undefined
+    : await dependencies.prepareOperatorState()
+      .catch(() => fail("OPERATOR_STATE_REJECTED"));
   try {
-    return (await acquireAuthorizedCommitReceipt({
+    const transport = new BoundedGitHubTransport({ fetch: dependencies.fetch });
+    const source = await acquireAuthorizedCommitReceipt({
       request: execution.request,
       repositoryPolicy: execution.repositoryPolicy,
       attributionPolicy: execution.attributionPolicy,
       preflightOperatorRun: execution.operatorRun,
       operatorAuthorization: execution.operatorAuthorization,
       transport,
-    })).receipt;
+    });
+    if (preparedState === undefined) return source.receipt;
+    const state = await preparedState.open(source.operatorRun)
+      .catch(() => fail("OPERATOR_STATE_REJECTED"));
+    const objects = new GitHubObjectAdapter({ request: execution.request, transport });
+    return await orchestrateAcquisitionDraft({
+      receipt: source.receipt,
+      repositoryPolicy: execution.repositoryPolicy,
+      attributionPolicy: execution.attributionPolicy,
+      attributionPolicyDocument: execution.attributionPolicyDocument as never,
+      operatorRun: source.operatorRun,
+      loadTree: (sha) => objects.loadTree(sha),
+      loadBlob: (sha) => objects.loadBlob(sha),
+      store: state.store,
+      audit: state.audit,
+    });
   } catch (error) {
-    return fail(error instanceof AuthorizedSourceError
-      ? error.message : "SOURCE_RECEIPT_REJECTED");
+    if (
+      error instanceof OperatorCommandError
+      || error instanceof AuthorizedSourceError
+      || error instanceof AcquisitionOrchestrationError
+      || error instanceof OperatorStateError
+    ) return fail(error.message);
+    return fail("ACQUISITION_REJECTED");
+  } finally {
+    preparedState?.dispose();
   }
 };
 
@@ -259,6 +298,14 @@ const realDependencies: Dependencies = {
   now: Date.now,
   osIdentity: () => process.getuid === undefined
     ? fail("HOST_IDENTITY_REJECTED") : `uid:${process.getuid()}`,
+  prepareOperatorState: () => prepareOperatorState({
+    CODEGUESSR_ACQUISITION_ROOT: process.env.CODEGUESSR_ACQUISITION_ROOT,
+    CODEGUESSR_ACQUISITION_KEY_BASE64: process.env.CODEGUESSR_ACQUISITION_KEY_BASE64,
+    CODEGUESSR_ACQUISITION_VOLUME_ATTESTATION:
+      process.env.CODEGUESSR_ACQUISITION_VOLUME_ATTESTATION,
+    CODEGUESSR_ACQUISITION_OWNERSHIP_ATTESTATION:
+      process.env.CODEGUESSR_ACQUISITION_OWNERSHIP_ATTESTATION,
+  }),
 };
 const main = async (): Promise<void> => {
   try {

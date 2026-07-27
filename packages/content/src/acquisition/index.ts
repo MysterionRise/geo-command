@@ -36,6 +36,10 @@ export {
 } from "./github/request";
 export { BoundedGitHubTransport } from "./github/transport";
 export {
+  GitHubObjectAdapter,
+  GitHubObjectAdapterError,
+} from "./github/object-adapter";
+export {
   acquireAuthorizedCommitReceipt,
   AuthorizedSourceError,
   type AuthorizedCommitReceipt,

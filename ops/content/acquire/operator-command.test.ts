@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   canonicalSha256,
+  appendAuditEvent,
   READ_ONLY_PUBLIC_REPOSITORY_TOKEN,
 } from "@codeguessr/content/operator/acquisition";
 import { OperatorCommandError, runOperatorCommand } from "./index";
@@ -24,6 +26,33 @@ const repositoryMetadata = {
   archived: false,
   disabled: false,
   licenseIdentifier: "MIT",
+};
+const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
+const gitBlobSha = (value: Uint8Array): string =>
+  createHash("sha1").update(`blob ${value.byteLength}\0`).update(value).digest("hex");
+interface TreeEntry {
+  readonly path: string;
+  readonly mode: string;
+  readonly type: string;
+  readonly sha: string;
+}
+const gitTree = (entries: readonly TreeEntry[]) => {
+  const body = Buffer.concat(entries
+    .map((entry) => ({
+      entry,
+      sortName: entry.type === "tree" ? `${entry.path}/` : entry.path,
+    }))
+    .sort((left, right) =>
+      Buffer.compare(Buffer.from(left.sortName), Buffer.from(right.sortName)))
+    .map(({ entry }) => Buffer.concat([
+      Buffer.from(`${entry.mode === "040000" ? "40000" : entry.mode} ${entry.path}\0`),
+      Buffer.from(entry.sha, "hex"),
+    ])));
+  return {
+    sha: createHash("sha1").update(`tree ${body.byteLength}\0`).update(body).digest("hex"),
+    truncated: false,
+    tree: entries,
+  };
 };
 const effectiveFixture = (validThrough?: string) => {
   const policy = (
@@ -356,5 +385,137 @@ describe("operator-only acquisition command", () => {
       }), { headers: { date: "Thu, 01 Jan 2026 00:06:00 GMT" } }),
     ) as never).catch((failure) => failure);
     expect(skew.message).toBe("RECEIPT_AUTHORIZATION_REJECTED");
+  });
+
+  it("composes certified Git objects into a quarantined draft when state is prepared", async () => {
+    const fixture = effectiveFixture();
+    const parentBytes = bytes("export const answer = 41;\n");
+    const childBytes = bytes("export const answer = 42;\n");
+    const licenseBytes = bytes("MIT License\n");
+    const parentBlob = gitBlobSha(parentBytes);
+    const childBlob = gitBlobSha(childBytes);
+    const licenseBlob = gitBlobSha(licenseBytes);
+    const parentSubtree = gitTree([
+      { path: "answer.ts", mode: "100644", type: "blob", sha: parentBlob },
+    ]);
+    const childSubtree = gitTree([
+      { path: "answer.ts", mode: "100644", type: "blob", sha: childBlob },
+    ]);
+    const parentRoot = gitTree([
+      { path: "src", mode: "040000", type: "tree", sha: parentSubtree.sha },
+    ]);
+    const childRoot = gitTree([
+      { path: "LICENSE", mode: "100644", type: "blob", sha: licenseBlob },
+      { path: "src", mode: "040000", type: "tree", sha: childSubtree.sha },
+    ]);
+    const trees = new Map([
+      [parentRoot.sha, parentRoot],
+      [childRoot.sha, childRoot],
+      [parentSubtree.sha, parentSubtree],
+      [childSubtree.sha, childSubtree],
+    ]);
+    const blobs = new Map([
+      [parentBlob, parentBytes],
+      [childBlob, childBytes],
+      [licenseBlob, licenseBytes],
+    ]);
+    const stored: string[] = [];
+    let audit: readonly any[] = [];
+    const order: string[] = [];
+    const result = await runOperatorCommand(["--run", "run.json"], {
+      ...dependencies(fixture, async (request) => {
+        order.push("network");
+        if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) {
+          return new Response(JSON.stringify({
+            sha: "a".repeat(40),
+            parents: [{ sha: "b".repeat(40) }],
+            commit: {
+              message: "Implement answer",
+              tree: { sha: childRoot.sha },
+              verification: { verified: true, reason: "valid" },
+              author: { name: "Developer" },
+              committer: { name: "Developer" },
+            },
+            author: { login: "developer", type: "User" },
+            committer: { login: "developer", type: "User" },
+          }), { headers: { date: githubDate } });
+        }
+        if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) {
+          return new Response(JSON.stringify({
+            sha: "b".repeat(40), commit: { tree: { sha: parentRoot.sha } },
+          }));
+        }
+        if (request.url === "https://api.github.com/repos/owner/repo") {
+          return repositoryResponse();
+        }
+        const treeIdentity = request.url.match(/\/git\/trees\/([0-9a-f]{40})$/u)?.[1];
+        if (treeIdentity !== undefined) {
+          return new Response(JSON.stringify(trees.get(treeIdentity)));
+        }
+        const blobIdentity = request.url.match(/\/git\/blobs\/([0-9a-f]{40})$/u)?.[1];
+        const content = blobIdentity === undefined ? undefined : blobs.get(blobIdentity);
+        if (blobIdentity === undefined || content === undefined) {
+          throw new Error("unexpected object endpoint");
+        }
+        return new Response(JSON.stringify({
+          sha: blobIdentity,
+          encoding: "base64",
+          size: content.byteLength,
+          content: Buffer.from(content).toString("base64"),
+        }));
+      }),
+      prepareOperatorState: async () => {
+        order.push("state");
+        return {
+          open: async () => ({
+            store: {
+              put: async ({ identity }: any) => {
+                stored.push(identity.objectId);
+                return { identity, created: true };
+              },
+              remove: async ({ objectId }: any) => {
+                const index = stored.indexOf(objectId);
+                if (index < 0) return false;
+                stored.splice(index, 1);
+                return true;
+              },
+            },
+            audit: {
+              append: async (event: unknown) => {
+                audit = appendAuditEvent(audit, event);
+                return audit;
+              },
+            },
+          }),
+          dispose: () => undefined,
+        };
+      },
+    } as never);
+    if (!("draft" in result)) throw new Error("expected quarantined draft result");
+    expect(result.draft.state).toBe("DRAFT_REVIEW_REQUIRED");
+    expect(result.draft.input.source.path).toBe("src/answer.ts");
+    expect(result.checkpoint.rootTree).toBe(childRoot.sha);
+    expect(stored).toHaveLength(3);
+    expect(audit.at(-1)?.eventType).toBe("DRAFT_COMPLETED");
+    expect(order[0]).toBe("state");
+  });
+
+  it("preserves a categorical state-opening failure after source certification", async () => {
+    const fixture = effectiveFixture();
+    let disposed = false;
+    const error = await runOperatorCommand(["--run", "run.json"], {
+      ...dependencies(fixture, async (request) => {
+        if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) return successfulResponse();
+        if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) return parentResponse();
+        return repositoryResponse();
+      }),
+      prepareOperatorState: async () => ({
+        open: async () => { throw new Error("state canary"); },
+        dispose: () => { disposed = true; },
+      }),
+    } as never).catch((failure) => failure);
+    expect(error).toBeInstanceOf(OperatorCommandError);
+    expect(error.message).toBe("OPERATOR_STATE_REJECTED");
+    expect(disposed).toBe(true);
   });
 });

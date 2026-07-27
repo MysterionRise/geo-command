@@ -2,8 +2,8 @@
 heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
-timestamp: 2026-07-27T21:47:10+01:00
-next-action: Wire the certified receipt to production Git tree/blob adapters and approved external store/audit/checkpoint configuration
+timestamp: 2026-07-27T22:04:07+01:00
+next-action: Add durable draft/checkpoint evidence output and resumable paused-run handling before any authorized live WP-024 or WP-025 run
 completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023]
 pending-wps: [WP-024, WP-025, WP-026, WP-027]
 failed-wps: []
@@ -17,6 +17,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-secure-operator-operations.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-promotion-game-adapters.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-offline-acquisition-orchestration.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-production-operator-wiring.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -70,3 +71,11 @@ The orchestrator verifies both root/subtree revisions, screens before persistenc
 Fresh root evidence is workspace TAP, 58/58 Vitest files and 1,912/1,912 tests, recursive workspace/operator typecheck, production game build, and all 3 containment checks.
 
 WP-024 and WP-025 remain pending. The production command stops at the certified source receipt; it still needs real Git tree/blob adapters and approved external store, audit, checkpoint and draft-output configuration. Non-effective project controls continue to prohibit a live run.
+
+The production operator wiring prerequisite is accepted after corrective independent audit. The command now preflights an approved absolute external state root, owner-only directories, encrypted-store key and storage attestations before network; it explicitly disposes decoded key bytes on every later outcome. The bounded GitHub object adapter retrieves exact tree and blob endpoints through the existing transport, while downstream verification binds their Git identities before draft construction.
+
+After source certification, the command opens the real encrypted store and durable audit sink with the response-date-authorized operator run, traverses the exact approved revision and emits an in-memory `DRAFT_REVIEW_REQUIRED` result plus checkpoint. State-child replacement is revalidated before opening, and state failures retain a categorical `OPERATOR_STATE_REJECTED` boundary.
+
+Fresh root evidence is workspace TAP, 60/60 Vitest files and 1,919/1,919 tests, recursive workspace/operator typecheck, production game build, all 3 containment checks and clean diff hygiene. Independent audit reports no remaining Critical, Important or Minor findings and marks the slice READY.
+
+WP-024 and WP-025 remain pending. The command does not yet durably write the derived draft/checkpoint evidence or resume a paused rate-limited run. Active project policy and operator registers remain non-effective, so no live GitHub run, real draft, review, promotion or playable rehearsal has occurred.
