@@ -138,3 +138,12 @@ verified. Host FileVault reports enabled; the external root
 No secret, raw snapshot or draft entered the workspace. The remaining live-run
 blocker is the required real Rights/Safety and Security review: no agent or
 placeholder approval may activate either register.
+
+The project history is now connected to
+`git@github.com:MysterionRise/code-guesser.git`. Existing remote `main` commit
+`8173338` was retained as the second parent of history-preserving integration
+commit `8814502`; the verified CodeGuessr tree is the merge result. Both
+`main` and `codex/heist/codeguessr-content-acquisition` were published by
+fast-forward with no force push, and the designated checkout at
+`/Users/konstantinp/projects/code-guesser` was fast-forwarded to the same
+integration commit.
