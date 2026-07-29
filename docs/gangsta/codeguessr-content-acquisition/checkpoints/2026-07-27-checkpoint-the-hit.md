@@ -3,7 +3,7 @@ heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
 timestamp: 2026-07-27T22:17:01+01:00
-next-action: Add durable draft/checkpoint evidence output and resumable paused-run handling before any authorized live WP-024 or WP-025 run
+next-action: Obtain real control/operator approvals and encrypted-state authorization, then execute the two controlled live WP-024/WP-025 draft runs
 completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023]
 pending-wps: [WP-024, WP-025, WP-026, WP-027]
 failed-wps: []
@@ -19,6 +19,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-offline-acquisition-orchestration.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-production-operator-wiring.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-durable-acquisition-artifacts.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-real-target-and-resumable-operator.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -88,3 +89,29 @@ The actual operator command now requires prepared external state before transpor
 Fresh root evidence is workspace TAP, 60/60 Vitest files and 1,921/1,921 tests, recursive workspace/operator typecheck, production game build, all 3 containment checks and clean diff hygiene. Independent re-audit reports no Critical, Important or Minor findings and marks the slice READY.
 
 WP-024 and WP-025 remain pending because valid GitHub rate-limit pauses are not yet durably checkpointed or explicitly resumable. Active controls remain non-effective; no live acquisition or real-content claim has occurred.
+
+The real-target and resumable-operator prerequisite is accepted after
+corrective TDD and repeated independent audit. The pinned MIT target, exact
+Claude Opus 4.6 attribution marker, vendor evidence and review-ready policy
+hashes are project-controlled. GitHub case-preserving identity is handled
+without widening the canonical repository.
+
+Validated rate-limit pauses now retain encrypted, hash-bound safe Git objects;
+explicit resume reauthorizes exact source, policy-entry, register, operator,
+tool and object bindings before network, replays completed objects without
+refetch, and preserves one logical audit run ID. Unsafe blobs are never cached,
+and all run-owned raw objects are removed on terminal failure across
+orchestration, pause and command boundaries while pre-existing reused objects
+remain intact.
+
+Fresh root evidence is workspace TAP, 61/61 Vitest files and 1,935/1,935
+tests, recursive workspace/operator typecheck, production game build, all 3
+containment checks and clean diff hygiene. Final independent audit reports no
+Critical or Important runtime findings; one non-blocking Minor test-coverage
+observation remains recorded in the territory report.
+
+WP-024 and WP-025 remain pending only at the live control boundary. The
+approved-policy and operator registers are deliberately non-effective, no
+approved encrypted external state root has been selected, and no real GitHub
+draft has been created. WP-026/WP-027 remain blocked on the required four
+independent human reviews and non-public playable rehearsal.

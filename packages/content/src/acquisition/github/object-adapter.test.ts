@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { validateAcquisitionRequest } from "./request";
-import { BoundedGitHubTransport } from "./transport";
+import { BoundedGitHubTransport, GitHubRateLimitPause } from "./transport";
 import { GitHubObjectAdapter, GitHubObjectAdapterError } from "./object-adapter";
 
 const testModuleName: string = "vitest";
@@ -88,6 +88,26 @@ describe("bounded GitHub object adapter", () => {
       const error = await adapter.loadBlob(blobSha).catch((failure) => failure);
       expect(error).toBeInstanceOf(GitHubObjectAdapterError);
       expect(error.message).toBe("BLOB_RESPONSE_REJECTED");
+    }
+  });
+
+  it("preserves a validated rate-limit pause from tree and blob requests", async () => {
+    for (const load of ["tree", "blob"] as const) {
+      const adapter = new GitHubObjectAdapter({
+        request,
+        transport: new BoundedGitHubTransport({
+          fetch: async () => new Response(null, {
+            status: 429,
+            headers: { "retry-after": "60" },
+          }),
+          now: () => 1_000,
+        }),
+      });
+      const error = await (load === "tree"
+        ? adapter.loadTree(treeSha)
+        : adapter.loadBlob(blobSha)).catch((failure) => failure);
+      expect(error).toBeInstanceOf(GitHubRateLimitPause);
+      expect(error.resumeAfterEpochMs).toBe(61_000);
     }
   });
 });

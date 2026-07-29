@@ -259,6 +259,8 @@ const fixture = async (
   const plaintexts = new Map<string, Uint8Array>();
   let audit: readonly Readonly<Record<string, unknown>>[] = [];
   const input = {
+    logicalRunId: "f".repeat(64),
+    resuming: false,
     receipt: certified.receipt,
     ...authorization,
     operatorRun: certified.operatorRun,
@@ -291,6 +293,7 @@ const fixture = async (
         return audit;
       },
     },
+    checkpointVerifiedObject: () => undefined,
   };
   return {
     input, stored, removed, plaintexts, audit: () => audit,
@@ -319,7 +322,7 @@ describe("authorized offline acquisition orchestration", () => {
     });
     expect(result.draft.input.diff).toBe(null);
     expect(result.checkpoint.rootTree).toBe(value.input.receipt.childTreeSha);
-    expect(result.checkpoint.verifiedObjects).toHaveLength(3);
+    expect(result.checkpoint.verifiedObjects).toHaveLength(7);
     expect(result.artifacts.draft.plaintextSha256).toBe(result.artifacts.draft.objectId);
     expect(result.artifacts.checkpoint.plaintextSha256)
       .toBe(result.artifacts.checkpoint.objectId);
@@ -339,19 +342,17 @@ describe("authorized offline acquisition orchestration", () => {
         checkpoint: result.artifacts.checkpoint,
       },
     });
-    expect(new Set(value.stored.slice(0, 3))).toEqual(new Set([
+    expect(value.stored).toHaveLength(10);
+    expect(value.stored).toEqual(expect.arrayContaining([
       sha256(value.childBytes),
       sha256(value.parentBytes),
       sha256(value.licenseBytes),
     ]));
-    expect(value.stored).toHaveLength(6);
-    expect(value.audit().map((event) => event.eventType)).toEqual([
-      "RUN_STARTED",
-      "RAW_OBJECT_CREATED",
-      "RAW_OBJECT_CREATED",
-      "RAW_OBJECT_CREATED",
-      "DRAFT_COMPLETED",
-    ]);
+    const eventTypes = value.audit().map((event) => event.eventType);
+    expect(eventTypes[0]).toBe("RUN_STARTED");
+    expect(eventTypes.filter((eventType) => eventType === "RAW_OBJECT_CREATED"))
+      .toHaveLength(7);
+    expect(eventTypes.at(-1)).toBe("DRAFT_COMPLETED");
     expect(value.audit().at(-1)?.subjectHash).toBe(result.artifacts.index.objectId);
     expect(Object.isFrozen(result)).toBe(true);
     expect("promote" in result.draft).toBe(false);
@@ -406,6 +407,34 @@ describe("authorized offline acquisition orchestration", () => {
     expect(error.message).toBe("NO_ELIGIBLE_CANDIDATE");
     expect(value.stored).toEqual([]);
     expect(JSON.stringify(value.audit())).not.toContain("ghp_");
+  });
+
+  it("preserves a pre-existing reused object during terminal rollback", async () => {
+    const value = await fixture(
+      "LANGUAGE_CANDIDATE",
+      'export const token = "ghp_abcdefghijklmnopqrstuvwxyz123456";\n',
+    );
+    const tree = await value.input.loadTree(value.input.receipt.childTreeSha);
+    const plaintext = bytes(JSON.stringify(tree));
+    const objectId = sha256(plaintext);
+    const error = await orchestrateAcquisitionDraft({
+      ...value.input,
+      resuming: true,
+      resumeObjects: [{
+        kind: "tree",
+        gitSha: value.input.receipt.childTreeSha,
+        createdByRun: false,
+        snapshot: {
+          objectId,
+          plaintextSha256: objectId,
+          byteLength: plaintext.byteLength,
+        },
+        plaintext,
+      }],
+    } as never).catch((failure) => failure);
+    expect(error).toBeInstanceOf(AcquisitionOrchestrationError);
+    expect(error.message).toBe("NO_ELIGIBLE_CANDIDATE");
+    expect(value.removed).not.toContain(objectId);
   });
 
   it("rejects unrecognized attribution evidence before persistence", async () => {
@@ -478,12 +507,8 @@ describe("authorized offline acquisition orchestration", () => {
     } as never).catch((failure) => failure);
     expect(error).toBeInstanceOf(AcquisitionOrchestrationError);
     expect(error.message).toBe("AUDIT_REJECTED");
-    expect(new Set(value.stored)).toEqual(new Set([
-      sha256(value.childBytes),
-      sha256(value.parentBytes),
-      sha256(value.licenseBytes),
-    ]));
-    expect(value.removed).toHaveLength(3);
+    expect(value.stored).toEqual([]);
+    expect(value.removed).toHaveLength(10);
   });
 
   it("rejects commit or subtree drift from the preflight run before network", async () => {

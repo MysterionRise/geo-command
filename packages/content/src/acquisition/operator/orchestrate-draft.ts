@@ -20,6 +20,7 @@ import {
   type AcquisitionCheckpoint,
   type VerifiedObject,
 } from "../github/checkpoint";
+import { GitHubRateLimitPause } from "../github/transport";
 import {
   screenLicenseEvidence,
   type LicenseAdmissionEvidence,
@@ -43,19 +44,12 @@ import {
   isIssuedAuthorizedCommitReceipt,
   type AuthorizedCommitReceipt,
 } from "./authorized-source";
+import {
+  ACQUISITION_TOOL_HASH as TOOL_HASH,
+  ACQUISITION_TOOL_ID as TOOL_ID,
+  ACQUISITION_TOOL_VERSION as TOOL_VERSION,
+} from "./tool-binding";
 
-const TOOL_ID = "codeguessr-github-acquirer";
-const TOOL_VERSION = "1.0.0";
-const TOOL_HASH = canonicalSha256({
-  id: TOOL_ID,
-  version: TOOL_VERSION,
-  components: [
-    "immutable-subtree-v1",
-    "blob-screen-v1",
-    "line-sequence-v1",
-    "draft-v1",
-  ],
-});
 const SCHEMA_VERSION = "draft-v1";
 const SCHEMA_HASH = canonicalSha256({
   schema: SCHEMA_VERSION,
@@ -84,7 +78,16 @@ interface SnapshotStore {
 interface AuditSink {
   append(event: unknown): Promise<readonly unknown[]>;
 }
+export interface ResumableGitObject {
+  readonly kind: "tree" | "blob";
+  readonly gitSha: string;
+  readonly createdByRun: boolean;
+  readonly snapshot: SnapshotIdentity;
+  readonly plaintext: Uint8Array;
+}
 export interface AcquisitionOrchestrationInput {
+  readonly logicalRunId: string;
+  readonly resuming: boolean;
   readonly receipt: AuthorizedCommitReceipt;
   readonly repositoryPolicy: AuthorizedPolicy;
   readonly attributionPolicy: AuthorizedPolicy;
@@ -94,6 +97,10 @@ export interface AcquisitionOrchestrationInput {
   readonly loadBlob: (sha: string) => Promise<Uint8Array>;
   readonly store: SnapshotStore;
   readonly audit: AuditSink;
+  readonly resumeObjects?: readonly ResumableGitObject[];
+  readonly checkpointVerifiedObject: (
+    object: Omit<ResumableGitObject, "plaintext">,
+  ) => void;
 }
 export interface AcquisitionOrchestrationResult {
   readonly draft: AcquisitionDraft;
@@ -109,8 +116,19 @@ interface LoadedObjects {
   readonly treeShas: Set<string>;
   readonly trees: Map<string, GitTreeResponse>;
   readonly blobs: Map<string, Uint8Array>;
+  readonly identities: Map<string, SnapshotIdentity>;
   readonly loadTree: (sha: string) => Promise<GitTreeResponse>;
   readonly loadBlob: (sha: string) => Promise<Uint8Array>;
+  readonly persistVerified: (
+    kind: "tree" | "blob",
+    gitSha: string,
+    path: string,
+  ) => Promise<SnapshotIdentity | undefined>;
+  readonly persistAcceptedBlob: (
+    gitSha: string,
+    plaintext: Uint8Array,
+  ) => Promise<SnapshotIdentity>;
+  readonly rollbackTraversal: () => Promise<void>;
 }
 interface Candidate {
   readonly path: string;
@@ -123,6 +141,8 @@ interface Candidate {
 
 const sha256 = (value: Uint8Array | string): string =>
   createHash("sha256").update(value).digest("hex");
+const gitBlobSha = (value: Uint8Array): string =>
+  createHash("sha1").update(`blob ${value.byteLength}\0`).update(value).digest("hex");
 const artifactIdentity = (plaintext: Uint8Array): SnapshotIdentity => {
   const digest = sha256(plaintext);
   return Object.freeze({
@@ -145,6 +165,7 @@ const categorical = async <Value>(
   try {
     return await operation();
   } catch (error) {
+    if (error instanceof GitHubRateLimitPause) throw error;
     if (error instanceof AcquisitionOrchestrationError) throw error;
     return fail(code);
   }
@@ -162,6 +183,8 @@ const validateBindings = (input: AcquisitionOrchestrationInput): void => {
     || !H40.test(receipt.childSha)
     || !H40.test(receipt.parentSha)
     || receipt.childSha === receipt.parentSha
+    || !H64.test(input.logicalRunId)
+    || typeof input.resuming !== "boolean"
     || receipt.repository !== operatorRun.repository
     || receipt.purpose !== operatorRun.purpose
     || receipt.responseDate !== operatorRun.githubDate
@@ -196,20 +219,96 @@ const validateBindings = (input: AcquisitionOrchestrationInput): void => {
   ) fail("SOURCE_BINDING_REJECTED");
 };
 
-const loadedObjects = (input: AcquisitionOrchestrationInput): LoadedObjects => {
+const treePlaintext = (tree: GitTreeResponse): Uint8Array =>
+  new TextEncoder().encode(JSON.stringify(tree));
+const cachedTree = (plaintext: Uint8Array): GitTreeResponse => {
+  try {
+    return JSON.parse(
+      new TextDecoder("utf8", { fatal: true }).decode(plaintext),
+    ) as GitTreeResponse;
+  } catch {
+    return fail("RESUME_OBJECT_REJECTED");
+  }
+};
+const objectKey = (kind: "tree" | "blob", gitSha: string): string =>
+  `${kind}:${gitSha}`;
+
+const loadedObjects = (
+  input: AcquisitionOrchestrationInput,
+  runId: string,
+): LoadedObjects => {
   const trees = new Map<string, GitTreeResponse>();
   const blobs = new Map<string, Uint8Array>();
   const treeShas = new Set<string>();
-  return {
+  const identities = new Map<string, SnapshotIdentity>();
+  const created: SnapshotIdentity[] = [];
+  for (const object of input.resumeObjects ?? []) {
+    if (
+      !H40.test(object.gitSha)
+      || object.plaintext.byteLength !== object.snapshot.byteLength
+      || sha256(object.plaintext) !== object.snapshot.plaintextSha256
+      || object.snapshot.objectId !== object.snapshot.plaintextSha256
+      || typeof object.createdByRun !== "boolean"
+      || identities.has(objectKey(object.kind, object.gitSha))
+    ) fail("RESUME_OBJECT_REJECTED");
+    const key = objectKey(object.kind, object.gitSha);
+    identities.set(key, Object.freeze({ ...object.snapshot }));
+    if (object.createdByRun
+      && !created.some(({ objectId }) => objectId === object.snapshot.objectId)) {
+      created.push(Object.freeze({ ...object.snapshot }));
+    }
+    if (object.kind === "tree") {
+      trees.set(object.gitSha, cachedTree(object.plaintext));
+      treeShas.add(object.gitSha);
+    } else {
+      blobs.set(object.gitSha, new Uint8Array(object.plaintext));
+    }
+  }
+  const persist = async (
+    kind: "tree" | "blob",
+    gitSha: string,
+    plaintext: Uint8Array,
+  ): Promise<SnapshotIdentity> => {
+    const key = objectKey(kind, gitSha);
+    const cached = identities.get(key);
+    if (cached !== undefined) return cached;
+    const identity = artifactIdentity(plaintext);
+    const stored = await input.store.put({ identity, plaintext });
+    try {
+      await appendAudit(input, auditEvent(
+        input, runId, "RAW_OBJECT_CREATED", identity.objectId,
+        stored.created ? "VERIFIED_OBJECT_STORED" : "VERIFIED_OBJECT_REUSED",
+        identities.size,
+      ));
+      input.checkpointVerifiedObject({
+        kind,
+        gitSha,
+        createdByRun: stored.created,
+        snapshot: identity,
+      });
+    } catch (error) {
+      if (stored.created) {
+        const removed = await input.store.remove(identity)
+          .catch(() => fail("SNAPSHOT_ROLLBACK_REJECTED"));
+        if (!removed) fail("SNAPSHOT_ROLLBACK_REJECTED");
+      }
+      throw error;
+    }
+    identities.set(key, identity);
+    if (stored.created) created.push(identity);
+    if (kind === "tree") treeShas.add(gitSha);
+    return identity;
+  };
+  const loaded: LoadedObjects = {
     trees,
     blobs,
     treeShas,
+    identities,
     loadTree: async (sha) => {
       const cached = trees.get(sha);
       if (cached !== undefined) return cached;
       const value = await input.loadTree(sha);
       trees.set(sha, value);
-      treeShas.add(sha);
       return value;
     },
     loadBlob: async (sha) => {
@@ -221,7 +320,48 @@ const loadedObjects = (input: AcquisitionOrchestrationInput): LoadedObjects => {
       blobs.set(sha, copy);
       return copy;
     },
+    persistVerified: async (kind, gitSha, path) => {
+      const key = objectKey(kind, gitSha);
+      const cached = identities.get(key);
+      if (cached !== undefined) return cached;
+      if (kind === "blob") {
+        try {
+          screenBlob({
+            path,
+            bytes: blobs.get(gitSha) ?? fail("OBJECT_CHECKPOINT_REJECTED"),
+          }, new Set());
+        } catch {
+          return undefined;
+        }
+      }
+      const plaintext = kind === "tree"
+        ? treePlaintext(trees.get(gitSha) ?? fail("OBJECT_CHECKPOINT_REJECTED"))
+        : new Uint8Array(
+          blobs.get(gitSha) ?? fail("OBJECT_CHECKPOINT_REJECTED"),
+        );
+      return persist(kind, gitSha, plaintext);
+    },
+    persistAcceptedBlob: (gitSha, plaintext) =>
+      persist("blob", gitSha, new Uint8Array(plaintext)),
+    rollbackTraversal: async () => {
+      let removalFailed = false;
+      for (const [ordinal, identity] of [...created].reverse().entries()) {
+        const removed = await input.store.remove(identity)
+          .catch(() => false);
+        if (!removed) {
+          removalFailed = true;
+          continue;
+        }
+        await input.audit.append(auditEvent(
+          input, runId, "RAW_OBJECT_DELETED", identity.objectId,
+          "TERMINAL_REJECTION_ROLLBACK", ordinal,
+        )).catch(() => undefined);
+      }
+      created.length = 0;
+      if (removalFailed) fail("SNAPSHOT_ROLLBACK_REJECTED");
+    },
   };
+  return loaded;
 };
 
 const walkRevision = async (
@@ -233,13 +373,18 @@ const walkRevision = async (
     rootTreeSha,
     approvedSubtree: subtree,
     loadTree: objects.loadTree,
+    checkpoint: async ({ kind, sha, path }) => {
+      await objects.persistVerified(kind, sha, path);
+    },
   });
   const walk = await walkApprovedTree({
     rootTreeSha: resolved.subtreeTreeSha,
     approvedSubtree: subtree,
     loadTree: objects.loadTree,
     loadBlob: objects.loadBlob,
-    checkpoint: () => undefined,
+    checkpoint: async (_state, { kind, sha, path }) => {
+      await objects.persistVerified(kind, sha, path);
+    },
   });
   return { resolved, walk };
 };
@@ -409,12 +554,10 @@ const licenseEntry = (
 };
 
 const persistSnapshots = async (
-  input: AcquisitionOrchestrationInput,
   objects: LoadedObjects,
   candidate: Candidate,
   licenseSha: string,
   licenseBytes: Uint8Array,
-  runId: string,
 ): Promise<readonly { readonly gitSha: string; readonly identity: SnapshotIdentity }[]> => {
   const requested = [
     {
@@ -431,26 +574,13 @@ const persistSnapshots = async (
   requested.forEach((item) => unique.set(item.gitSha, item));
   const receipts = [];
   for (const item of unique.values()) {
-    const identity = {
-      objectId: sha256(item.plaintext),
-      plaintextSha256: sha256(item.plaintext),
-      byteLength: item.plaintext.byteLength,
-    };
-    const stored = await input.store.put({ identity, plaintext: item.plaintext });
-    try {
-      await appendAudit(input, auditEvent(
-        input, runId, "RAW_OBJECT_CREATED", identity.objectId,
-        stored.created ? "VERIFIED_OBJECT_STORED" : "VERIFIED_OBJECT_REUSED",
-        receipts.length,
-      ));
-    } catch (error) {
-      if (stored.created) {
-        const removed = await input.store.remove(identity)
-          .catch(() => fail("SNAPSHOT_ROLLBACK_REJECTED"));
-        if (!removed) fail("SNAPSHOT_ROLLBACK_REJECTED");
-      }
-      throw error;
+    const checkpointed = objects.identities.get(objectKey("blob", item.gitSha));
+    if (checkpointed !== undefined) {
+      receipts.push({ gitSha: item.gitSha, identity: checkpointed });
+      continue;
     }
+    if (gitBlobSha(item.plaintext) !== item.gitSha) fail("SNAPSHOT_REJECTED");
+    const identity = await objects.persistAcceptedBlob(item.gitSha, item.plaintext);
     receipts.push({ gitSha: item.gitSha, identity });
   }
   return receipts;
@@ -538,7 +668,6 @@ const checkpoint = (
   input: AcquisitionOrchestrationInput,
   childSubtree: string,
   objects: LoadedObjects,
-  snapshots: readonly { readonly gitSha: string; readonly identity: SnapshotIdentity }[],
 ): AcquisitionCheckpoint => createCheckpoint({
   repository: input.receipt.repository,
   commit: input.receipt.childSha,
@@ -564,10 +693,12 @@ const checkpoint = (
   purpose: input.receipt.purpose,
   observationTime: input.operatorRun.callerObservationTime,
   visitedTreeShas: [...objects.treeShas].sort(),
-  verifiedObjects: snapshots.map(({ gitSha, identity }): VerifiedObject => ({
-    gitSha,
-    sha256: identity.plaintextSha256,
-  })),
+  verifiedObjects: [...objects.identities.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, identity]): VerifiedObject => ({
+      gitSha: key.slice(key.indexOf(":") + 1),
+      sha256: identity.plaintextSha256,
+    })),
 });
 
 const draftInput = (
@@ -719,12 +850,12 @@ const executeOrchestration = async (
   }
   const snapshots = await categorical(
     () => persistSnapshots(
-      input, objects, candidate, boundLicense.sha, licenseBytes, runId,
+      objects, candidate, boundLicense.sha, licenseBytes,
     ),
     "SNAPSHOT_REJECTED",
   );
   const progress = checkpoint(
-    input, child.resolved.subtreeTreeSha, objects, snapshots,
+    input, child.resolved.subtreeTreeSha, objects,
   );
   let draft: AcquisitionDraft;
   try {
@@ -751,19 +882,21 @@ export const orchestrateAcquisitionDraft = async (
   input: AcquisitionOrchestrationInput,
 ): Promise<AcquisitionOrchestrationResult> => {
   validateBindings(input);
-  const runId = canonicalSha256({
-    receipt: input.receipt,
-    operatorRegisterHash: input.operatorRun.registerHash,
-  });
+  const runId = input.logicalRunId;
   const subject = canonicalSha256(input.receipt);
-  await appendAudit(input, auditEvent(
-    input, runId, "RUN_STARTED", subject, "AUTHORIZED_RECEIPT_ACCEPTED",
-  ));
+  if (!input.resuming) {
+    await appendAudit(input, auditEvent(
+      input, runId, "RUN_STARTED", subject, "AUTHORIZED_RECEIPT_ACCEPTED",
+    ));
+  }
+  const objects = loadedObjects(input, runId);
   try {
-    return await executeOrchestration(input, loadedObjects(input), runId);
+    return await executeOrchestration(input, objects, runId);
   } catch (error) {
+    if (error instanceof GitHubRateLimitPause) throw error;
     const code = error instanceof AcquisitionOrchestrationError
       ? error.message : "ORCHESTRATION_REJECTED";
+    await objects.rollbackTraversal();
     await input.audit.append(auditEvent(
       input, runId, "RUN_REJECTED", subject, code,
     )).catch(() => undefined);

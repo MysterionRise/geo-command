@@ -1,30 +1,38 @@
 {
   "policyClass": "ATTRIBUTION_MARKER",
-  "policyVersion": "attribution-markers-v1-blocked",
-  "status": "NON_EFFECTIVE_PENDING_VENDOR_CAPTURE_AND_DATED_APPROVALS",
-  "markerRules": [],
-  "nonEffectiveCandidates": [
+  "policyVersion": "attribution-markers-v1",
+  "permittedPurposes": [
+    "LANGUAGE_CANDIDATE",
+    "RECORDED_AGENT_PARTICIPATION_CANDIDATE"
+  ],
+  "rules": [
     {
-      "publisher": "Anthropic",
-      "repository": "mysterionrise/encrypted-information-retrieval",
-      "commit": "33d5980f6b21fe7fb2df693bbb92ba4145866ffb",
-      "observedGitRepresentation": "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
-      "permittedClassification": null,
-      "blocker": "The signed evidence does not contain a captured vendor URL, capture date, content hash, applicable product version, and dated policy approvals."
+      "ruleId": "anthropic-claude-opus-4-6-coauthor-v1",
+      "purpose": "RECORDED_AGENT_PARTICIPATION_CANDIDATE",
+      "kind": "marker",
+      "exactMarker": "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+      "classification": "NAMED_MODEL_RECORDED",
+      "modelName": "Claude Opus 4.6",
+      "documentation": {
+        "publisher": "Anthropic",
+        "url": "https://code.claude.com/docs/en/settings.md",
+        "capturedAt": "2026-07-29T11:01:50Z",
+        "contentHash": "c6722f96333874c974a157de6ac12dbff17e5cc3dcebcd570054483e120dbbcb",
+        "productVersion": "Claude Code attribution settings captured 2026-07-29",
+        "expectedGitRepresentation": "Co-Authored-By: <active Claude model> <noreply@anthropic.com>"
+      }
     }
   ],
-  "requiredVendorDocumentFields": [
-    "publisher",
-    "url",
-    "captureDate",
-    "contentSha256",
-    "applicableProductVersion",
-    "expectedGitRepresentation",
-    "permittedClassification"
-  ],
-  "permittedClassifications": [
-    "NAMED_MODEL_RECORDED",
-    "AGENT_RECORDED"
-  ],
-  "authorizationEvidence": []
+  "authorizationEvidence": [
+    {
+      "qualificationStatus": "QUALIFIED",
+      "repository": "mysterionrise/encrypted-information-retrieval",
+      "commit": "8f8183fb80fb90165e321d96df7a3a5f4ccd445e",
+      "observedGitRepresentation": "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>",
+      "qualificationEvidence": "docs/gangsta/codeguessr-content-acquisition/evidence/2026-07-29-real-content-target-qualification.md",
+      "qualificationEvidenceSha256": "b86db70c9365b947bc8f9376955b45f13fc8c2a2e615b15c6a5a22a4b784db70",
+      "vendorCapture": "docs/gangsta/codeguessr-content-acquisition/evidence/vendor/2026-07-29-anthropic-claude-code-attribution.md",
+      "vendorCaptureSha256": "7761e9b12fb17778d4dad09b5ab495fa4e8b26d80015fb36bc7ae269bf3500d8"
+    }
+  ]
 }

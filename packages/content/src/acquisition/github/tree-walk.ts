@@ -20,12 +20,22 @@ export interface TreeWalkOptions {
   readonly rootTreeSha: string;
   readonly loadTree: (sha: string) => Promise<GitTreeResponse>;
   readonly loadBlob: (sha: string) => Promise<Uint8Array>;
-  readonly checkpoint: (state: WalkResult) => void;
+  readonly checkpoint: (
+    state: WalkResult,
+    object: {
+      readonly kind: "tree" | "blob";
+      readonly sha: string;
+      readonly path: string;
+    },
+  ) => void | Promise<void>;
 }
 export interface ResolveSubtreeOptions {
   readonly approvedSubtree: string;
   readonly rootTreeSha: string;
   readonly loadTree: (sha: string) => Promise<GitTreeResponse>;
+  readonly checkpoint?: (
+    object: { readonly kind: "tree"; readonly sha: string; readonly path: string },
+  ) => void | Promise<void>;
 }
 export interface ResolvedSubtree {
   readonly subtreeTreeSha: string;
@@ -150,9 +160,14 @@ export const resolveApprovedSubtree = async (
   ) fail("MALFORMED_APPROVED_SUBTREE");
   let cursor = options.rootTreeSha;
   const visited: string[] = [];
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     const response = await verifiedTree(cursor, options.loadTree);
     visited.push(cursor);
+    await options.checkpoint?.({
+      kind: "tree",
+      sha: cursor,
+      path: segments.slice(0, index).join("/"),
+    });
     const entry = response.tree.find(({ path }) => path === segment)
       ?? fail("APPROVED_SUBTREE_NOT_FOUND");
     if (entry.type !== "tree" || entry.mode !== "040000") {
@@ -178,9 +193,21 @@ interface WalkState {
   scheduledBlobs: number;
 }
 
-const recordProgress = (options: TreeWalkOptions, state: WalkState, sha: string): void => {
+const recordProgress = async (
+  options: TreeWalkOptions,
+  state: WalkState,
+  object: {
+    readonly kind: "tree" | "blob";
+    readonly sha: string;
+    readonly path: string;
+  },
+): Promise<void> => {
+  const { sha } = object;
   state.visitedObjectShas.push(sha);
-  options.checkpoint(snapshot(state.selectedBlobs, state.visitedObjectShas));
+  await options.checkpoint(
+    snapshot(state.selectedBlobs, state.visitedObjectShas),
+    object,
+  );
 };
 
 const visitBlob = async (
@@ -191,7 +218,11 @@ const visitBlob = async (
   const bytes = await options.loadBlob(object.sha);
   if (gitObjectSha("blob", bytes) !== object.sha) fail("BLOB_IDENTITY_MISMATCH");
   state.selectedBlobs.push({ path: object.path, sha: object.sha });
-  recordProgress(options, state, object.sha);
+  await recordProgress(options, state, {
+    kind: "blob",
+    sha: object.sha,
+    path: object.path,
+  });
 };
 
 const visitTree = async (
@@ -211,7 +242,11 @@ const visitTree = async (
   state.scheduledBlobs += response.tree.filter(({ type }) => type === "blob").length;
   if (state.scheduledBlobs > MAX_SELECTED_BLOBS) fail("SELECTED_BLOB_LIMIT");
   if (treeIdentity(response.tree) !== object.sha) fail("TREE_IDENTITY_MISMATCH");
-  recordProgress(options, state, object.sha);
+  await recordProgress(options, state, {
+    kind: "tree",
+    sha: object.sha,
+    path: object.path,
+  });
   for (const entry of [...response.tree].reverse()) {
     state.pending.push({
       kind: entry.type as "tree" | "blob",

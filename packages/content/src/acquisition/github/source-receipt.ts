@@ -3,6 +3,8 @@ import type { AcquisitionRequest } from "./request";
 
 type Json = Record<string, unknown>;
 const H40 = /^[0-9a-f]{40}$/u;
+const REPOSITORY =
+  /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\/[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
 const nonempty = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 16_384;
 const record = (value: unknown): Json | undefined =>
@@ -94,9 +96,12 @@ export const parseRepositorySource = (
   const source = record(raw);
   const licence = record(source?.license);
   const repositoryId = source?.node_id;
+  const repository = source?.full_name;
   if (
     !nonempty(repositoryId)
-    || source?.full_name !== request.repository
+    || typeof repository !== "string"
+    || !REPOSITORY.test(repository)
+    || repository.toLowerCase() !== request.repository
     || source?.private !== false
     || source?.visibility !== "public"
     || source?.archived !== false

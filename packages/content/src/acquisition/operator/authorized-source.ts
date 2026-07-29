@@ -15,7 +15,10 @@ import {
   parseParentCommitSource,
   parseRepositorySource,
 } from "../github/source-receipt";
-import { BoundedGitHubTransport } from "../github/transport";
+import {
+  BoundedGitHubTransport,
+  GitHubRateLimitPause,
+} from "../github/transport";
 
 export interface AuthorizedCommitReceipt {
   readonly status: "AUTHORIZED_COMMIT_RECEIPT";
@@ -149,7 +152,8 @@ export const acquireAuthorizedCommitReceipt = async (
       await input.transport.requestJson(buildRepositoryEndpoint(input.request)),
       input.request,
     );
-  } catch {
+  } catch (error) {
+    if (error instanceof GitHubRateLimitPause) throw error;
     return fail("SOURCE_RECEIPT_REJECTED");
   }
   const receipt = deepFreeze({

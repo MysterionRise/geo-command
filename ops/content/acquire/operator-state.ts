@@ -8,7 +8,10 @@ import {
   type AuthorizedOperatorRun,
 } from "@codeguessr/content/operator/acquisition";
 
-type OperatorState = Pick<AcquisitionOrchestrationInput, "store" | "audit">;
+type OperatorStore = Awaited<ReturnType<typeof openEncryptedStore>>;
+type OperatorAudit = Awaited<ReturnType<typeof openAuditSink>>;
+type OperatorState = Pick<AcquisitionOrchestrationInput, "store" | "audit">
+  & { readonly store: OperatorStore; readonly audit: OperatorAudit };
 interface Environment {
   readonly CODEGUESSR_ACQUISITION_ROOT?: string | undefined;
   readonly CODEGUESSR_ACQUISITION_KEY_BASE64?: string | undefined;
@@ -67,11 +70,93 @@ const childDirectory = async (root: string, name: string): Promise<string> => {
   ) fail("OPERATOR_STATE_REJECTED");
   return path;
 };
+const openPreparedStore = async (
+  root: string,
+  snapshots: string,
+  key: Uint8Array,
+): Promise<OperatorStore> => {
+  if (await validateRoot(root) !== root
+    || await childDirectory(root, "snapshots") !== snapshots) {
+    fail("OPERATOR_STATE_REJECTED");
+  }
+  return openEncryptedStore({
+    root: snapshots,
+    key,
+    volumeAttestation: "APPROVED_ENCRYPTED_VOLUME",
+    ownershipAttestation: "ACQUISITION_OWNED",
+  });
+};
+const openPreparedAudit = async (
+  root: string,
+  auditRoot: string,
+  operatorRun: AuthorizedOperatorRun,
+): Promise<OperatorAudit> => {
+  if (await validateRoot(root) !== root
+    || await childDirectory(root, "audit") !== auditRoot) {
+    fail("OPERATOR_STATE_REJECTED");
+  }
+  return openAuditSink({
+    root: auditRoot,
+    ownershipAttestation: "ACQUISITION_OWNED",
+    authorizedRun: operatorRun,
+    projectOperatorRegisterHash: operatorRun.registerHash,
+  });
+};
+const buildPreparedState = (
+  root: string,
+  key: Uint8Array,
+  snapshots: string,
+  auditRoot: string,
+) => {
+  let opened = false;
+  let storeOpened = false;
+  let disposed = false;
+  const dispose = (): void => {
+    if (disposed) return;
+    key.fill(0);
+    disposed = true;
+  };
+  const openStore = async (): Promise<OperatorStore> => {
+    if (storeOpened || disposed) return fail("OPERATOR_STATE_REJECTED");
+    storeOpened = true;
+    try {
+      return await openPreparedStore(root, snapshots, key);
+    } catch {
+      return fail("OPERATOR_STATE_REJECTED");
+    } finally {
+      key.fill(0);
+    }
+  };
+  const openAudit = async (run: AuthorizedOperatorRun): Promise<OperatorAudit> => {
+    if (disposed) return fail("OPERATOR_STATE_REJECTED");
+    try {
+      return await openPreparedAudit(root, auditRoot, run);
+    } catch {
+      return fail("OPERATOR_STATE_REJECTED");
+    }
+  };
+  return Object.freeze({
+    openStore,
+    openAudit,
+    open: async (run: AuthorizedOperatorRun) => {
+      if (opened || storeOpened || disposed) fail("OPERATOR_STATE_REJECTED");
+      opened = true;
+      try {
+        return Object.freeze({ store: await openStore(), audit: await openAudit(run) });
+      } catch {
+        return fail("OPERATOR_STATE_REJECTED");
+      }
+    },
+    dispose,
+  });
+};
 
 export const prepareOperatorState = async (
   environment: Environment,
 ): Promise<Readonly<{
   open(operatorRun: AuthorizedOperatorRun): Promise<OperatorState>;
+  openStore(): Promise<OperatorStore>;
+  openAudit(operatorRun: AuthorizedOperatorRun): Promise<OperatorAudit>;
   dispose(): void;
 }>> => {
   if (
@@ -91,42 +176,5 @@ export const prepareOperatorState = async (
     key.fill(0);
     throw error;
   }
-  let opened = false;
-  let disposed = false;
-  const dispose = (): void => {
-    if (disposed) return;
-    key.fill(0);
-    disposed = true;
-  };
-  return Object.freeze({
-    open: async (operatorRun) => {
-      if (opened || disposed) fail("OPERATOR_STATE_REJECTED");
-      opened = true;
-      try {
-        if (await validateRoot(root) !== root) fail("OPERATOR_STATE_REJECTED");
-        if (
-          await childDirectory(root, "snapshots") !== snapshots
-          || await childDirectory(root, "audit") !== auditRoot
-        ) fail("OPERATOR_STATE_REJECTED");
-        const store = await openEncryptedStore({
-          root: snapshots,
-          key,
-          volumeAttestation: "APPROVED_ENCRYPTED_VOLUME",
-          ownershipAttestation: "ACQUISITION_OWNED",
-        });
-        const audit = await openAuditSink({
-          root: auditRoot,
-          ownershipAttestation: "ACQUISITION_OWNED",
-          authorizedRun: operatorRun,
-          projectOperatorRegisterHash: operatorRun.registerHash,
-        });
-        return Object.freeze({ store, audit });
-      } catch {
-        return fail("OPERATOR_STATE_REJECTED");
-      } finally {
-        dispose();
-      }
-    },
-    dispose,
-  });
+  return buildPreparedState(root, key, snapshots, auditRoot);
 };

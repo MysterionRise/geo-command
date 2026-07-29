@@ -8,18 +8,28 @@ import {
   AcquisitionOrchestrationError,
   AuthorizedSourceError,
   BoundedGitHubTransport,
+  GitHubRateLimitPause,
   GitHubObjectAdapter,
   orchestrateAcquisitionDraft,
   canonicalSha256,
+  rateLimitBindings,
   validateAcquisitionRequest,
   type AcquisitionRequest,
-  type AcquisitionOrchestrationInput,
   type AuthorizedOperatorRun,
   type AuthorizedPolicy,
   type OperatorAuthorizationInput,
   type PolicyAuthorizationInput,
+  type SnapshotIdentity,
+  type ResumableGitObject,
+  type StoredGitObject,
 } from "@codeguessr/content/operator/acquisition";
 import { OperatorStateError, prepareOperatorState } from "./operator-state";
+import {
+  cleanupRunOwnedObjects,
+  openRateLimitResume,
+  PauseResumeError,
+  persistRateLimitPause,
+} from "./pause-resume";
 
 type Json = Record<string, unknown>;
 type DescriptorOperatorAuthorization = Omit<
@@ -38,6 +48,11 @@ interface ProjectControls {
   readonly approvedPolicyRegister: PolicyAuthorizationInput["register"];
   readonly operatorAuthorizationRegister: OperatorAuthorizationInput["register"];
 }
+interface Invocation {
+  readonly mode: "run" | "resume";
+  readonly reference: string;
+  readonly checkpointObject?: SnapshotIdentity;
+}
 export interface AuthorizedExecution {
   readonly request: AcquisitionRequest;
   readonly repositoryPolicy: AuthorizedPolicy;
@@ -52,13 +67,11 @@ interface Dependencies {
   fetch(request: Request): Promise<Response>;
   now(): number;
   osIdentity(): string;
-  prepareOperatorState(): Promise<Readonly<{
-    open(operatorRun: AuthorizedOperatorRun): Promise<
-      Pick<AcquisitionOrchestrationInput, "store" | "audit">
-    >;
-    dispose(): void;
-  }>>;
+  prepareOperatorState(): ReturnType<typeof prepareOperatorState>;
 }
+type CommandState = Awaited<ReturnType<
+  Awaited<ReturnType<typeof prepareOperatorState>>["open"]
+>>;
 export class OperatorCommandError extends Error {
   public constructor(code: string) { super(code); this.name = "OperatorCommandError"; }
 }
@@ -77,16 +90,34 @@ const cloneFreeze = <Value>(value: Value): Value => {
   freeze(clone);
   return clone;
 };
-const runReference = (argv: readonly string[]): string => {
+const invocation = (argv: readonly string[]): Invocation => {
   const args = argv[0] === "--" ? argv.slice(1) : argv;
-  if (args.length !== 2 || args[0] !== "--run") return fail("ARGUMENTS_REJECTED");
+  const mode = args[0] === "--run" ? "run" : args[0] === "--resume" ? "resume" : null;
+  const expected = mode === "run" ? 2 : mode === "resume" ? 4 : 0;
+  if (args.length !== expected || mode === null) return fail("ARGUMENTS_REJECTED");
   const reference = args[1] ?? fail("ARGUMENTS_REJECTED");
   if (reference.length === 0
     || /^[a-z][a-z0-9+.-]*:\/\//iu.test(reference)
     || /(?:token|credential|secret|authorization|config)/iu.test(reference)) {
     fail("RUN_REFERENCE_REJECTED");
   }
-  return reference;
+  if (mode === "run") return Object.freeze({ mode, reference });
+  const objectId = args[2] ?? "";
+  const byteLength = Number(args[3]);
+  if (!/^[0-9a-f]{64}$/u.test(objectId)
+    || !/^(?:0|[1-9]\d*)$/u.test(args[3] ?? "")
+    || !Number.isSafeInteger(byteLength)) {
+    return fail("RESUME_REFERENCE_REJECTED");
+  }
+  return Object.freeze({
+    mode,
+    reference,
+    checkpointObject: Object.freeze({
+      objectId,
+      plaintextSha256: objectId,
+      byteLength,
+    }),
+  });
 };
 const descriptor = (raw: unknown): ExecutionDescriptor => {
   if (!exact(raw, [
@@ -228,13 +259,12 @@ export const authorizeExecutionDescriptor = (
 };
 
 const loadAuthorizedExecution = async (
-  argv: readonly string[],
+  reference: string,
   dependencies: Pick<
     Dependencies,
     "loadRunDescriptor" | "loadProjectControls" | "now" | "osIdentity"
   >,
 ): Promise<AuthorizedExecution> => {
-  const reference = runReference(argv);
   const receiptTime = trustedReceiptTime(dependencies.now());
   const osIdentity = dependencies.osIdentity();
   const raw = await dependencies.loadRunDescriptor(reference)
@@ -251,8 +281,9 @@ const loadAuthorizedExecution = async (
 const acquireSource = (
   execution: AuthorizedExecution,
   fetch: Dependencies["fetch"],
+  now: Dependencies["now"],
 ) => {
-  const transport = new BoundedGitHubTransport({ fetch });
+  const transport = new BoundedGitHubTransport({ fetch, now });
   return {
     transport,
     source: acquireAuthorizedCommitReceipt({
@@ -270,45 +301,107 @@ export const runInternalSourceReceiptStep = async (
   argv: readonly string[],
   dependencies: Omit<Dependencies, "prepareOperatorState">,
 ) => {
-  const execution = await loadAuthorizedExecution(argv, dependencies);
+  const requested = invocation(argv);
+  if (requested.mode !== "run") return fail("ARGUMENTS_REJECTED");
+  const execution = await loadAuthorizedExecution(requested.reference, dependencies);
   try {
-    return (await acquireSource(execution, dependencies.fetch).source).receipt;
+    return (await acquireSource(execution, dependencies.fetch, dependencies.now).source).receipt;
   } catch (error) {
     if (error instanceof AuthorizedSourceError) return fail(error.message);
     return fail("SOURCE_RECEIPT_REJECTED");
   }
 };
 
+interface CommandContext {
+  openedState?: CommandState;
+  operatorRun: AuthorizedOperatorRun;
+  resumeObjects: readonly ResumableGitObject[];
+  verifiedObjects: StoredGitObject[];
+}
+const executeDraft = async (
+  requested: Invocation,
+  execution: AuthorizedExecution,
+  dependencies: Dependencies,
+  preparedState: Awaited<ReturnType<typeof prepareOperatorState>>,
+  context: CommandContext,
+) => {
+  if (requested.mode === "resume") {
+    const resumed = await openRateLimitResume(
+      { checkpointObject: requested.checkpointObject
+        ?? fail("RESUME_REFERENCE_REJECTED") },
+      execution,
+      preparedState,
+      dependencies.now(),
+    );
+    context.openedState = resumed.state;
+    context.resumeObjects = resumed.objects;
+    context.verifiedObjects = [...resumed.checkpoint.storedObjects];
+  }
+  const acquisition = acquireSource(execution, dependencies.fetch, dependencies.now);
+  const source = await acquisition.source;
+  context.operatorRun = source.operatorRun;
+  context.openedState = context.openedState === undefined
+    ? await preparedState.open(source.operatorRun)
+      .catch(() => fail("OPERATOR_STATE_REJECTED"))
+    : Object.freeze({
+      store: context.openedState.store,
+      audit: await preparedState.openAudit(source.operatorRun)
+        .catch(() => fail("OPERATOR_STATE_REJECTED")),
+    });
+  const objects = new GitHubObjectAdapter({
+    request: execution.request,
+    transport: acquisition.transport,
+  });
+  const logicalRunId = rateLimitBindings({
+    ...execution,
+    operatorRun: source.operatorRun,
+  }).logicalRunId;
+  return orchestrateAcquisitionDraft({
+    logicalRunId,
+    resuming: requested.mode === "resume",
+    receipt: source.receipt,
+    repositoryPolicy: execution.repositoryPolicy,
+    attributionPolicy: execution.attributionPolicy,
+    attributionPolicyDocument: execution.attributionPolicyDocument as never,
+    operatorRun: source.operatorRun,
+    loadTree: (sha) => objects.loadTree(sha),
+    loadBlob: (sha) => objects.loadBlob(sha),
+    store: context.openedState.store,
+    audit: context.openedState.audit,
+    resumeObjects: context.resumeObjects,
+    checkpointVerifiedObject: (object) => {
+      const key = `${object.kind}:${object.gitSha}`;
+      if (context.verifiedObjects.some(
+        (candidate) => `${candidate.kind}:${candidate.gitSha}` === key,
+      )) return;
+      context.verifiedObjects.push(Object.freeze({
+        ...object,
+        snapshot: Object.freeze({ ...object.snapshot }),
+      }));
+    },
+  });
+};
+
 export const runOperatorCommand = async (
   argv: readonly string[],
   dependencies: Dependencies,
 ) => {
-  const execution = await loadAuthorizedExecution(argv, dependencies);
+  const requested = invocation(argv);
+  const execution = await loadAuthorizedExecution(requested.reference, dependencies);
   if (dependencies.prepareOperatorState === undefined) {
     return fail("OPERATOR_STATE_REJECTED");
   }
   const preparedState = await dependencies.prepareOperatorState()
     .catch(() => fail("OPERATOR_STATE_REJECTED"));
+  const context: CommandContext = {
+    operatorRun: execution.operatorRun,
+    resumeObjects: Object.freeze([]),
+    verifiedObjects: [],
+  };
   try {
-    const acquisition = acquireSource(execution, dependencies.fetch);
-    const source = await acquisition.source;
-    const state = await preparedState.open(source.operatorRun)
-      .catch(() => fail("OPERATOR_STATE_REJECTED"));
-    const objects = new GitHubObjectAdapter({
-      request: execution.request,
-      transport: acquisition.transport,
-    });
-    const result = await orchestrateAcquisitionDraft({
-      receipt: source.receipt,
-      repositoryPolicy: execution.repositoryPolicy,
-      attributionPolicy: execution.attributionPolicy,
-      attributionPolicyDocument: execution.attributionPolicyDocument as never,
-      operatorRun: source.operatorRun,
-      loadTree: (sha) => objects.loadTree(sha),
-      loadBlob: (sha) => objects.loadBlob(sha),
-      store: state.store,
-      audit: state.audit,
-    });
+    const result = await executeDraft(
+      requested, execution, dependencies, preparedState, context,
+    );
     return cloneFreeze({
       status: result.draft.state,
       draftId: result.draft.draftId,
@@ -317,11 +410,31 @@ export const runOperatorCommand = async (
       artifactObjects: result.artifacts,
     });
   } catch (error) {
+    if (error instanceof GitHubRateLimitPause) {
+      return persistRateLimitPause({
+        execution,
+        operatorRun: context.operatorRun,
+        prepared: preparedState,
+        pause: error,
+        nowEpochMs: dependencies.now(),
+        verifiedObjects: context.verifiedObjects,
+        ...(context.openedState === undefined ? {} : { opened: context.openedState }),
+      });
+    }
+    if (context.openedState !== undefined && context.verifiedObjects.length > 0) {
+      await cleanupRunOwnedObjects({
+        execution,
+        operatorRun: context.operatorRun,
+        state: context.openedState,
+        objects: context.verifiedObjects,
+      });
+    }
     if (
       error instanceof OperatorCommandError
       || error instanceof AuthorizedSourceError
       || error instanceof AcquisitionOrchestrationError
       || error instanceof OperatorStateError
+      || error instanceof PauseResumeError
     ) return fail(error.message);
     return fail("ACQUISITION_REJECTED");
   } finally {

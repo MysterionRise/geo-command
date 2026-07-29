@@ -13,6 +13,7 @@ import {
   runInternalSourceReceiptStep,
   runOperatorCommand,
 } from "./index";
+import { PauseResumeError } from "./pause-resume";
 const testModuleName: string = "vitest";
 const { describe, expect, it } = await import(testModuleName) as any;
 const root = process.cwd();
@@ -32,6 +33,8 @@ const repositoryMetadata = {
   licenseIdentifier: "MIT",
 };
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
+const sha256 = (value: Uint8Array): string =>
+  createHash("sha256").update(value).digest("hex");
 const gitBlobSha = (value: Uint8Array): string =>
   createHash("sha1").update(`blob ${value.byteLength}\0`).update(value).digest("hex");
 interface TreeEntry {
@@ -202,6 +205,145 @@ const repositoryResponse = () => new Response(JSON.stringify({
   disabled: repositoryMetadata.disabled,
   license: { spdx_id: repositoryMetadata.licenseIdentifier },
 }), { status: 200, headers: { "content-type": "application/json" } });
+const rateLimitedResponse = () => new Response(null, {
+  status: 429,
+  headers: { "retry-after": "60" },
+});
+const memoryOperatorState = (options: {
+  readonly failPausePersistence?: boolean;
+  readonly failAuditEvent?: string;
+} = {}) => {
+  const objects = new Map<string, Uint8Array>();
+  let audit: readonly any[] = [];
+  const store = {
+    put: async ({ identity, plaintext }: any) => {
+      if (options.failPausePersistence
+        && Buffer.from(plaintext).includes(Buffer.from("github-rate-limit-pause-v1"))) {
+        throw new Error("pause persistence canary");
+      }
+      const created = !objects.has(identity.objectId);
+      if (created) objects.set(identity.objectId, new Uint8Array(plaintext));
+      return { identity, created };
+    },
+    read: async (identity: any) => {
+      const value = objects.get(identity.objectId);
+      if (value === undefined) throw new Error("missing object");
+      return new Uint8Array(value);
+    },
+    remove: async ({ objectId }: any) => objects.delete(objectId),
+  };
+  const auditSink = {
+    append: async (event: any) => {
+      if (event.eventType === options.failAuditEvent) {
+        throw new Error("audit canary");
+      }
+      audit = appendAuditEvent(audit, event);
+      return audit;
+    },
+  };
+  return {
+    objects,
+    audit: () => audit,
+    prepare: async () => ({
+      open: async () => ({ store, audit: auditSink }),
+      openStore: async () => store,
+      openAudit: async () => auditSink,
+      dispose: () => undefined,
+    }),
+  };
+};
+const resumableLanguageScenario = (rejectResumedSource = false) => {
+  const parentBytes = bytes("export const answer = 41;\n");
+  const childBytes = bytes("export const answer = 42;\n");
+  const licenseBytes = bytes("MIT License\n");
+  const parentBlob = gitBlobSha(parentBytes);
+  const childBlob = gitBlobSha(childBytes);
+  const licenseBlob = gitBlobSha(licenseBytes);
+  const parentSubtree = gitTree([
+    { path: "answer.ts", mode: "100644", type: "blob", sha: parentBlob },
+  ]);
+  const childSubtree = gitTree([
+    { path: "answer.ts", mode: "100644", type: "blob", sha: childBlob },
+  ]);
+  const parentRoot = gitTree([
+    { path: "src", mode: "040000", type: "tree", sha: parentSubtree.sha },
+  ]);
+  const childRoot = gitTree([
+    { path: "LICENSE", mode: "100644", type: "blob", sha: licenseBlob },
+    { path: "src", mode: "040000", type: "tree", sha: childSubtree.sha },
+  ]);
+  const trees = new Map([
+    [parentRoot.sha, parentRoot],
+    [childRoot.sha, childRoot],
+    [parentSubtree.sha, parentSubtree],
+    [childSubtree.sha, childSubtree],
+  ]);
+  const blobs = new Map([
+    [parentBlob, parentBytes],
+    [childBlob, childBytes],
+    [licenseBlob, licenseBytes],
+  ]);
+  let paused = false;
+  let childReceiptCalls = 0;
+  const fetch = async (request: Request): Promise<Response> => {
+    if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) {
+      childReceiptCalls += 1;
+      if (rejectResumedSource && childReceiptCalls > 1) {
+        return new Response(JSON.stringify({ sha: "malformed" }), {
+          headers: { date: githubDate },
+        });
+      }
+      return new Response(JSON.stringify({
+        sha: "a".repeat(40),
+        parents: [{ sha: "b".repeat(40) }],
+        commit: {
+          message: "Implement answer",
+          tree: { sha: childRoot.sha },
+          verification: { verified: true, reason: "valid" },
+          author: { name: "Developer" },
+          committer: { name: "Developer" },
+        },
+        author: { login: "developer", type: "User" },
+        committer: { login: "developer", type: "User" },
+      }), { headers: { date: githubDate } });
+    }
+    if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) {
+      return new Response(JSON.stringify({
+        sha: "b".repeat(40), commit: { tree: { sha: parentRoot.sha } },
+      }));
+    }
+    if (request.url === "https://api.github.com/repos/owner/repo") {
+      return repositoryResponse();
+    }
+    const treeIdentity = request.url.match(/\/git\/trees\/([0-9a-f]{40})$/u)?.[1];
+    if (treeIdentity === parentRoot.sha && !paused) {
+      paused = true;
+      return rateLimitedResponse();
+    }
+    if (treeIdentity !== undefined) {
+      return new Response(JSON.stringify(trees.get(treeIdentity)));
+    }
+    const blobIdentity = request.url.match(/\/git\/blobs\/([0-9a-f]{40})$/u)?.[1];
+    const content = blobIdentity === undefined ? undefined : blobs.get(blobIdentity);
+    if (blobIdentity === undefined || content === undefined) {
+      throw new Error("unexpected object endpoint");
+    }
+    return new Response(JSON.stringify({
+      sha: blobIdentity,
+      encoding: "base64",
+      size: content.byteLength,
+      content: Buffer.from(content).toString("base64"),
+    }));
+  };
+  return {
+    fetch,
+    prePauseObjectIds: [
+      sha256(bytes(JSON.stringify(childRoot))),
+      sha256(bytes(JSON.stringify(childSubtree))),
+      sha256(childBytes),
+    ],
+  };
+};
 describe("operator-only acquisition command", () => {
   it("exposes acquisition only through a node operator subpath and locked root runner", async () => {
     const workspace = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -373,6 +515,27 @@ describe("operator-only acquisition command", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
+  it("accepts GitHub repository casing only when it is canonically equivalent", async () => {
+    const fixture = effectiveFixture();
+    const acquire = (fullName: string) => runInternalSourceReceiptStep(
+      ["--run", "run.json"],
+      dependencies(fixture, async (request) => {
+        if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) return successfulResponse();
+        if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) return parentResponse();
+        return new Response(JSON.stringify({
+          ...repositoryMetadata,
+          node_id: repositoryMetadata.repositoryId,
+          full_name: fullName,
+          private: false,
+          license: { spdx_id: repositoryMetadata.licenseIdentifier },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    ) as Promise<any>;
+    const accepted = await acquire("Owner/Repo");
+    expect(accepted.repository).toBe("owner/repo");
+    await expect(acquire("owner/different")).rejects.toThrow("SOURCE_RECEIPT_REJECTED");
+  });
+
   it("rejects malformed commits and response-clock skew", async () => {
     const fixture = effectiveFixture();
     for (const data of [
@@ -532,11 +695,263 @@ describe("operator-only acquisition command", () => {
     });
     expect(JSON.stringify(result)).not.toContain("src/answer.ts");
     expect(JSON.stringify(result)).not.toContain("export const answer");
-    expect(stored).toHaveLength(6);
+    expect(stored).toHaveLength(10);
     expect(audit.at(-1)?.eventType).toBe("DRAFT_COMPLETED");
     expect(audit.at(-1)?.subjectHash)
       .toBe((result as any).artifactObjects.index.objectId);
     expect(order[0]).toBe("state");
+  });
+
+  it("resumes mid-traversal from encrypted verified objects without refetching them", async () => {
+    const fixture = effectiveFixture();
+    const parentBytes = bytes("export const answer = 41;\n");
+    const childBytes = bytes("export const answer = 42;\n");
+    const licenseBytes = bytes("MIT License\n");
+    const parentBlob = gitBlobSha(parentBytes);
+    const childBlob = gitBlobSha(childBytes);
+    const licenseBlob = gitBlobSha(licenseBytes);
+    const parentSubtree = gitTree([
+      { path: "answer.ts", mode: "100644", type: "blob", sha: parentBlob },
+    ]);
+    const childSubtree = gitTree([
+      { path: "answer.ts", mode: "100644", type: "blob", sha: childBlob },
+    ]);
+    const parentRoot = gitTree([
+      { path: "src", mode: "040000", type: "tree", sha: parentSubtree.sha },
+    ]);
+    const childRoot = gitTree([
+      { path: "LICENSE", mode: "100644", type: "blob", sha: licenseBlob },
+      { path: "src", mode: "040000", type: "tree", sha: childSubtree.sha },
+    ]);
+    const trees = new Map([
+      [parentRoot.sha, parentRoot],
+      [childRoot.sha, childRoot],
+      [parentSubtree.sha, parentSubtree],
+      [childSubtree.sha, childSubtree],
+    ]);
+    const blobs = new Map([
+      [parentBlob, parentBytes],
+      [childBlob, childBytes],
+      [licenseBlob, licenseBytes],
+    ]);
+    const state = memoryOperatorState();
+    const calls = new Map<string, number>();
+    let now = receiptMs;
+    let paused = false;
+    const fetch = async (request: Request): Promise<Response> => {
+      calls.set(request.url, (calls.get(request.url) ?? 0) + 1);
+      if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) {
+        return new Response(JSON.stringify({
+          sha: "a".repeat(40),
+          parents: [{ sha: "b".repeat(40) }],
+          commit: {
+            message: "Implement answer",
+            tree: { sha: childRoot.sha },
+            verification: { verified: true, reason: "valid" },
+            author: { name: "Developer" },
+            committer: { name: "Developer" },
+          },
+          author: { login: "developer", type: "User" },
+          committer: { login: "developer", type: "User" },
+        }), { headers: { date: githubDate } });
+      }
+      if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) {
+        return new Response(JSON.stringify({
+          sha: "b".repeat(40), commit: { tree: { sha: parentRoot.sha } },
+        }));
+      }
+      if (request.url === "https://api.github.com/repos/owner/repo") {
+        return repositoryResponse();
+      }
+      const treeIdentity = request.url.match(/\/git\/trees\/([0-9a-f]{40})$/u)?.[1];
+      if (treeIdentity === parentRoot.sha && !paused) {
+        paused = true;
+        return rateLimitedResponse();
+      }
+      if (treeIdentity !== undefined) {
+        return new Response(JSON.stringify(trees.get(treeIdentity)));
+      }
+      const blobIdentity = request.url.match(/\/git\/blobs\/([0-9a-f]{40})$/u)?.[1];
+      const content = blobIdentity === undefined ? undefined : blobs.get(blobIdentity);
+      if (blobIdentity === undefined || content === undefined) {
+        throw new Error("unexpected object endpoint");
+      }
+      return new Response(JSON.stringify({
+        sha: blobIdentity,
+        encoding: "base64",
+        size: content.byteLength,
+        content: Buffer.from(content).toString("base64"),
+      }));
+    };
+    const deps = {
+      ...dependencies(fixture, fetch),
+      now: () => now,
+      prepareOperatorState: state.prepare,
+    };
+    const first = await runOperatorCommand(["--run", "run.json"], deps as never) as any;
+    expect(first.status).toBe("PAUSED");
+    expect(first.storedObjectCount).toBe(3);
+
+    now = first.resumeAfterEpochMs;
+    const result = await runOperatorCommand([
+      "--resume", "run.json", first.checkpointObject.objectId,
+      String(first.checkpointObject.byteLength),
+    ], deps as never) as any;
+    expect(result.status).toBe("DRAFT_REVIEW_REQUIRED");
+    for (const sha of [childRoot.sha, childSubtree.sha]) {
+      expect(calls.get(`https://api.github.com/repos/owner/repo/git/trees/${sha}`))
+        .toBe(1);
+    }
+    expect(calls.get(`https://api.github.com/repos/owner/repo/git/blobs/${childBlob}`))
+      .toBe(1);
+    expect(new Set(state.audit().map(({ run }) => run.runId))).toHaveLength(1);
+  });
+
+  it("removes run-owned pre-pause objects after resumed terminal rejection", async () => {
+    const fixture = effectiveFixture();
+    const childBytes = bytes("export const answer = 42;\n");
+    const unrelatedBytes = bytes("export const unrelated = 41;\n");
+    const licenseBytes = bytes("MIT License\n");
+    const childBlob = gitBlobSha(childBytes);
+    const unrelatedBlob = gitBlobSha(unrelatedBytes);
+    const licenseBlob = gitBlobSha(licenseBytes);
+    const childSubtree = gitTree([
+      { path: "answer.ts", mode: "100644", type: "blob", sha: childBlob },
+    ]);
+    const parentSubtree = gitTree([
+      { path: "unrelated.ts", mode: "100644", type: "blob", sha: unrelatedBlob },
+    ]);
+    const childRoot = gitTree([
+      { path: "LICENSE", mode: "100644", type: "blob", sha: licenseBlob },
+      { path: "src", mode: "040000", type: "tree", sha: childSubtree.sha },
+    ]);
+    const parentRoot = gitTree([
+      { path: "src", mode: "040000", type: "tree", sha: parentSubtree.sha },
+    ]);
+    const trees = new Map([
+      [childRoot.sha, childRoot],
+      [childSubtree.sha, childSubtree],
+      [parentRoot.sha, parentRoot],
+      [parentSubtree.sha, parentSubtree],
+    ]);
+    const blobs = new Map([
+      [childBlob, childBytes],
+      [unrelatedBlob, unrelatedBytes],
+      [licenseBlob, licenseBytes],
+    ]);
+    const state = memoryOperatorState();
+    let now = receiptMs;
+    let paused = false;
+    const fetch = async (request: Request): Promise<Response> => {
+      if (request.url.endsWith(`/commits/${"a".repeat(40)}`)) {
+        return new Response(JSON.stringify({
+          sha: "a".repeat(40),
+          parents: [{ sha: "b".repeat(40) }],
+          commit: {
+            message: "Implement answer",
+            tree: { sha: childRoot.sha },
+            verification: { verified: true, reason: "valid" },
+            author: { name: "Developer" },
+            committer: { name: "Developer" },
+          },
+          author: { login: "developer", type: "User" },
+          committer: { login: "developer", type: "User" },
+        }), { headers: { date: githubDate } });
+      }
+      if (request.url.endsWith(`/commits/${"b".repeat(40)}`)) {
+        return new Response(JSON.stringify({
+          sha: "b".repeat(40), commit: { tree: { sha: parentRoot.sha } },
+        }));
+      }
+      if (request.url === "https://api.github.com/repos/owner/repo") {
+        return repositoryResponse();
+      }
+      const treeIdentity = request.url.match(/\/git\/trees\/([0-9a-f]{40})$/u)?.[1];
+      if (treeIdentity === parentRoot.sha && !paused) {
+        paused = true;
+        return rateLimitedResponse();
+      }
+      if (treeIdentity !== undefined) {
+        return new Response(JSON.stringify(trees.get(treeIdentity)));
+      }
+      const blobIdentity = request.url.match(/\/git\/blobs\/([0-9a-f]{40})$/u)?.[1];
+      const content = blobIdentity === undefined ? undefined : blobs.get(blobIdentity);
+      if (blobIdentity === undefined || content === undefined) {
+        throw new Error("unexpected object endpoint");
+      }
+      return new Response(JSON.stringify({
+        sha: blobIdentity,
+        encoding: "base64",
+        size: content.byteLength,
+        content: Buffer.from(content).toString("base64"),
+      }));
+    };
+    const deps = {
+      ...dependencies(fixture, fetch),
+      now: () => now,
+      prepareOperatorState: state.prepare,
+    };
+    const first = await runOperatorCommand(["--run", "run.json"], deps as never) as any;
+    expect(first.status).toBe("PAUSED");
+    const checkpoint = JSON.parse(Buffer.from(
+      state.objects.get(first.checkpointObject.objectId)!,
+    ).toString("utf8"));
+    expect(checkpoint.storedObjects).toHaveLength(3);
+    expect(checkpoint.storedObjects.every(
+      ({ createdByRun }: any) => createdByRun === true,
+    )).toBe(true);
+
+    now = first.resumeAfterEpochMs;
+    const error = await runOperatorCommand([
+      "--resume", "run.json", first.checkpointObject.objectId,
+      String(first.checkpointObject.byteLength),
+    ], deps as never).catch((failure) => failure);
+    expect(error).toBeInstanceOf(OperatorCommandError);
+    expect(error.message).toBe("NO_ELIGIBLE_CANDIDATE");
+    for (const { snapshot } of checkpoint.storedObjects) {
+      expect(state.objects.has(snapshot.objectId)).toBe(false);
+    }
+    expect(state.audit().filter(({ eventType }) => eventType === "RAW_OBJECT_DELETED"))
+      .toHaveLength(6);
+  });
+
+  it("cleans run-owned objects when pause persistence, pause audit, or resumed source fails", async () => {
+    const fixture = effectiveFixture();
+    for (const failure of ["persistence", "audit", "resumed-source"] as const) {
+      const scenario = resumableLanguageScenario(failure === "resumed-source");
+      const state = memoryOperatorState({
+        failPausePersistence: failure === "persistence",
+        ...(failure === "audit" ? { failAuditEvent: "RUN_PAUSED" } : {}),
+      });
+      let now = receiptMs;
+      const deps = {
+        ...dependencies(fixture, scenario.fetch),
+        now: () => now,
+        prepareOperatorState: state.prepare,
+      };
+      const first = await runOperatorCommand(["--run", "run.json"], deps as never)
+        .catch((error) => error) as any;
+      if (failure === "persistence" || failure === "audit") {
+        expect(first).toBeInstanceOf(PauseResumeError);
+        expect(first.message).toBe(
+          failure === "persistence"
+            ? "PAUSE_PERSISTENCE_REJECTED"
+            : "PAUSE_AUDIT_REJECTED",
+        );
+      } else {
+        expect(first.status).toBe("PAUSED");
+        now = first.resumeAfterEpochMs;
+        const resumed = await runOperatorCommand([
+          "--resume", "run.json", first.checkpointObject.objectId,
+          String(first.checkpointObject.byteLength),
+        ], deps as never).catch((error) => error);
+        expect(resumed).toBeInstanceOf(OperatorCommandError);
+        expect(resumed.message).toBe("COMMIT_RECEIPT_REJECTED");
+      }
+      for (const objectId of scenario.prePauseObjectIds) {
+        expect(state.objects.has(objectId)).toBe(false);
+      }
+    }
   });
 
   it("preserves a categorical state-opening failure after source certification", async () => {
@@ -556,5 +971,156 @@ describe("operator-only acquisition command", () => {
     expect(error).toBeInstanceOf(OperatorCommandError);
     expect(error.message).toBe("OPERATOR_STATE_REJECTED");
     expect(disposed).toBe(true);
+  });
+
+  it("persists a validated rate-limit pause without exposing source or operator details", async () => {
+    const fixture = effectiveFixture();
+    const state = memoryOperatorState();
+    let networkCalls = 0;
+    const result = await runOperatorCommand(["--run", "run.json"], {
+      ...dependencies(fixture, async () => {
+        networkCalls += 1;
+        return rateLimitedResponse();
+      }),
+      prepareOperatorState: state.prepare,
+    } as never);
+
+    expect(result).toMatchObject({
+      status: "PAUSED",
+      resumeAfterEpochMs: receiptMs + 60_000,
+      checkpointHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      checkpointObject: {
+        objectId: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        plaintextSha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        byteLength: expect.any(Number),
+      },
+      storedObjectCount: 0,
+    });
+    expect(networkCalls).toBe(1);
+    expect(state.objects.size).toBe(1);
+    expect(state.audit().map(({ eventType }) => eventType)).toEqual(["RUN_PAUSED"]);
+    expect(JSON.stringify(result)).not.toMatch(
+      /owner\/repo|src|Operator|uid:1|Implement answer|noreply/iu,
+    );
+  });
+
+  it("preserves a validated pause from every source-receipt request", async () => {
+    const fixture = effectiveFixture();
+    for (const pauseAt of [2, 3]) {
+      const state = memoryOperatorState();
+      let calls = 0;
+      const result = await runOperatorCommand(["--run", "run.json"], {
+        ...dependencies(fixture, async () => {
+          calls += 1;
+          if (calls === pauseAt) return rateLimitedResponse();
+          return calls === 1 ? successfulResponse() : parentResponse();
+        }),
+        prepareOperatorState: state.prepare,
+      } as never) as any;
+      expect(result.status).toBe("PAUSED");
+      expect(calls).toBe(pauseAt);
+      expect(state.audit().at(-1)?.eventType).toBe("RUN_PAUSED");
+    }
+  });
+
+  it("requires an explicit eligible resume and revalidates its checkpoint before network", async () => {
+    const fixture = effectiveFixture();
+    const state = memoryOperatorState();
+    let now = receiptMs;
+    let networkCalls = 0;
+    const deps = {
+      ...dependencies(fixture, async () => {
+        networkCalls += 1;
+        return rateLimitedResponse();
+      }),
+      now: () => now,
+      prepareOperatorState: state.prepare,
+    };
+    const paused = await runOperatorCommand(["--run", "run.json"], deps as never) as any;
+    const resumeArgs = [
+      "--resume", "run.json", paused.checkpointObject.objectId,
+      String(paused.checkpointObject.byteLength),
+    ];
+
+    const early = await runOperatorCommand(resumeArgs, deps as never)
+      .catch((failure) => failure);
+    expect(early).toBeInstanceOf(OperatorCommandError);
+    expect(early.message).toBe("RESUME_NOT_READY");
+    expect(networkCalls).toBe(1);
+
+    now = paused.resumeAfterEpochMs;
+    const resumed = await runOperatorCommand(resumeArgs, deps as never) as any;
+    expect(resumed.status).toBe("PAUSED");
+    expect(networkCalls).toBe(2);
+    expect(state.audit().map(({ eventType }) => eventType)).toEqual([
+      "RUN_PAUSED", "RUN_RESUMED", "RUN_PAUSED",
+    ]);
+    expect(new Set(state.audit().map(({ run }) => run.runId))).toHaveLength(1);
+
+    const tampered = await runOperatorCommand(
+      ["--resume", "run.json", "f".repeat(64), String(paused.checkpointObject.byteLength)],
+      deps as never,
+    ).catch((failure) => failure);
+    expect(tampered).toBeInstanceOf(OperatorCommandError);
+    expect(tampered.message).toBe("RESUME_CHECKPOINT_REJECTED");
+    expect(networkCalls).toBe(2);
+  });
+
+  it("rejects every altered resume binding and listed stored object before network", async () => {
+    const fixture = effectiveFixture();
+    const state = memoryOperatorState();
+    let now = receiptMs;
+    let networkCalls = 0;
+    const deps = {
+      ...dependencies(fixture, async () => {
+        networkCalls += 1;
+        return rateLimitedResponse();
+      }),
+      now: () => now,
+      prepareOperatorState: state.prepare,
+    };
+    const paused = await runOperatorCommand(["--run", "run.json"], deps as never) as any;
+    const originalBytes = state.objects.get(paused.checkpointObject.objectId)!;
+    const original = JSON.parse(Buffer.from(originalBytes).toString("utf8"));
+    now = paused.resumeAfterEpochMs;
+    const publish = (checkpoint: any, recompute = true) => {
+      const { checkpointHash: _old, ...payload } = checkpoint;
+      const value = recompute
+        ? { ...payload, checkpointHash: canonicalSha256(payload) }
+        : checkpoint;
+      const plaintext = bytes(JSON.stringify(value));
+      const objectId = createHash("sha256").update(plaintext).digest("hex");
+      state.objects.set(objectId, plaintext);
+      return ["--resume", "run.json", objectId, String(plaintext.byteLength)];
+    };
+    const cases = [
+      publish({ ...original, requestHash: "0".repeat(64) }),
+      publish({ ...original, repositoryPolicyHash: "1".repeat(64) }),
+      publish({ ...original, repositoryPolicyEntryId: "different-repository-entry" }),
+      publish({ ...original, attributionPolicyEntryId: "different-attribution-entry" }),
+      publish({ ...original, operatorBindingHash: "2".repeat(64) }),
+      publish({ ...original, toolHash: "3".repeat(64) }),
+      publish({ ...original, requestHash: "4".repeat(64) }, false),
+      publish({
+        ...original,
+        storedObjects: [{
+          kind: "blob",
+          gitSha: "e".repeat(40),
+          createdByRun: true,
+          snapshot: {
+            objectId: "5".repeat(64),
+            plaintextSha256: "5".repeat(64),
+            byteLength: 1,
+          },
+        }],
+      }),
+    ];
+    for (const args of cases) {
+      const error = await runOperatorCommand(args, deps as never)
+        .catch((failure) => failure);
+      expect(error).toBeInstanceOf(OperatorCommandError);
+      expect(error.message).toBe("RESUME_CHECKPOINT_REJECTED");
+    }
+    expect(networkCalls).toBe(1);
   });
 });

@@ -95,6 +95,31 @@ describe("operator external state preflight", () => {
     }
   });
 
+  it("opens resume storage once and permits re-bound audit sinks until disposal", async () => {
+    const root = await realpath(
+      await mkdtemp(join(tmpdir(), "codeguessr-operator-state-")),
+    );
+    await chmod(root, 0o700);
+    try {
+      const prepared = await prepareOperatorState(environment(root));
+      const store = await prepared.openStore();
+      const plaintext = new TextEncoder().encode("pause metadata");
+      const objectId = createHash("sha256").update(plaintext).digest("hex");
+      const identity = { objectId, plaintextSha256: objectId, byteLength: plaintext.byteLength };
+      await store.put({ identity, plaintext });
+      expect(await store.read(identity)).toEqual(plaintext);
+      await expect(prepared.openStore()).rejects.toThrow("OPERATOR_STATE_REJECTED");
+      await expect(prepared.open(operatorRun())).rejects.toThrow("OPERATOR_STATE_REJECTED");
+      expect(await prepared.openAudit(operatorRun())).toBeDefined();
+      expect(await prepared.openAudit(operatorRun())).toBeDefined();
+      prepared.dispose();
+      await expect(prepared.openAudit(operatorRun())).rejects
+        .toThrow("OPERATOR_STATE_REJECTED");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects malformed child state during preflight and can dispose before opening", async () => {
     const root = await realpath(
       await mkdtemp(join(tmpdir(), "codeguessr-operator-state-")),

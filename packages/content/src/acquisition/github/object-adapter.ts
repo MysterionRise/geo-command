@@ -1,5 +1,8 @@
 import { buildGitObjectEndpoint, type AcquisitionRequest } from "./request";
-import { BoundedGitHubTransport } from "./transport";
+import {
+  BoundedGitHubTransport,
+  GitHubRateLimitPause,
+} from "./transport";
 import type { GitTreeEntry, GitTreeResponse } from "./tree-walk";
 
 type Json = Record<string, unknown>;
@@ -98,6 +101,7 @@ export class GitHubObjectAdapter {
         sha,
       );
     } catch (error) {
+      if (error instanceof GitHubRateLimitPause) throw error;
       if (error instanceof GitHubObjectAdapterError) throw error;
       return fail("TREE_RESPONSE_REJECTED");
     }
@@ -112,6 +116,7 @@ export class GitHubObjectAdapter {
         sha,
       );
     } catch (error) {
+      if (error instanceof GitHubRateLimitPause) throw error;
       if (error instanceof GitHubObjectAdapterError) throw error;
       return fail("BLOB_RESPONSE_REJECTED");
     }

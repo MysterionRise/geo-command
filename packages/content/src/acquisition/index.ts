@@ -34,7 +34,10 @@ export {
   validateAcquisitionRequest,
   type AcquisitionRequest,
 } from "./github/request";
-export { BoundedGitHubTransport } from "./github/transport";
+export {
+  BoundedGitHubTransport,
+  GitHubRateLimitPause,
+} from "./github/transport";
 export {
   GitHubObjectAdapter,
   GitHubObjectAdapterError,
@@ -49,4 +52,15 @@ export {
   AcquisitionOrchestrationError,
   type AcquisitionOrchestrationInput,
   type AcquisitionOrchestrationResult,
+  type ResumableGitObject,
 } from "./operator/orchestrate-draft";
+export {
+  authorizeRateLimitResume,
+  createRateLimitCheckpoint,
+  rateLimitBindings,
+  rateLimitCheckpointIdentity,
+  serializeRateLimitCheckpoint,
+  RateLimitCheckpointError,
+  type RateLimitCheckpoint,
+  type StoredGitObject,
+} from "./operator/rate-limit-checkpoint";
