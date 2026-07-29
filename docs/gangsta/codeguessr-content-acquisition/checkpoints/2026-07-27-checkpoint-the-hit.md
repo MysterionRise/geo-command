@@ -20,6 +20,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-production-operator-wiring.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-durable-acquisition-artifacts.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-real-target-and-resumable-operator.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-public-smoke-crawl.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -115,3 +116,14 @@ approved-policy and operator registers are deliberately non-effective, no
 approved encrypted external state root has been selected, and no real GitHub
 draft has been created. WP-026/WP-027 remain blocked on the required four
 independent human reviews and non-public playable rehearsal.
+
+A bounded, unauthenticated public GitHub smoke crawl was completed on
+2026-07-29 against the qualified commit. Repository, commit, tree, parent,
+licence and source Git identities matched the qualification evidence. The
+production blob screen accepted the live parent and child bytes, and the
+production changed-line reconstruction reproduced changed line 84, excerpt
+lines 82–86 and excerpt SHA-256
+`ae408e14bdb4d5b5a742bef7b208df02a85a3136b159c2476cf910b71512d61b`.
+This was a non-authorizing engineering check using temporary responses only;
+it did not invoke the production operator, persist a draft or change the
+remaining approval and encrypted-state gates.
