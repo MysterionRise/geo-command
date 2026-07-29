@@ -3,7 +3,7 @@ heist: codeguessr-content-acquisition
 phase: the-hit
 status: in-progress
 timestamp: 2026-07-27T22:17:01+01:00
-next-action: Obtain real control/operator approvals and encrypted-state authorization, then execute the two controlled live WP-024/WP-025 draft runs
+next-action: Record real reviewer approvals, activate the policy/operator registers, then execute the two controlled live WP-024/WP-025 draft runs
 completed-wps: [WP-001, WP-002, WP-003, WP-004, WP-005, WP-006, WP-007, WP-008, WP-009, WP-010, WP-011, WP-012, WP-013, WP-014, WP-015, WP-016, WP-017, WP-018, WP-019, WP-020, WP-021, WP-022, WP-023]
 pending-wps: [WP-024, WP-025, WP-026, WP-027]
 failed-wps: []
@@ -21,6 +21,7 @@ artifacts:
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-27-durable-acquisition-artifacts.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-real-target-and-resumable-operator.md
   - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-public-smoke-crawl.md
+  - docs/gangsta/codeguessr-content-acquisition/reports/2026-07-29-operator-storage-preflight.md
   - packages/content/src/evidence/
   - packages/content/src/rights/source-regime.ts
   - packages/content/src/acquisition/policy/
@@ -127,3 +128,13 @@ lines 82–86 and excerpt SHA-256
 This was a non-authorizing engineering check using temporary responses only;
 it did not invoke the production operator, persist a draft or change the
 remaining approval and encrypted-state gates.
+
+The external operator-state prerequisite is now mechanically prepared and
+verified. Host FileVault reports enabled; the external root
+`/Users/konstantinp/Documents/CodeGuessr-acquisition-state` and its empty
+`snapshots`/`audit` children are real UID-501-owned `0700` directories. A new
+32-byte key is held only in macOS Keychain, and the real no-network
+`prepareOperatorState` preflight passed with the exact storage attestations.
+No secret, raw snapshot or draft entered the workspace. The remaining live-run
+blocker is the required real Rights/Safety and Security review: no agent or
+placeholder approval may activate either register.
