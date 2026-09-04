@@ -9,6 +9,11 @@
       "browser": null,
       "node": "./src/acquisition/index.ts",
       "default": null
+    },
+    "./local-poc-support": {
+      "browser": null,
+      "node": "./src/acquisition/local-poc-support.ts",
+      "default": null
     }
   },
   "scripts": {

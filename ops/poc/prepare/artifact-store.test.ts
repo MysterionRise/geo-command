@@ -1,0 +1,245 @@
+import { link, mkdtemp, open, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { canonicalArtifactBytes, canonicalArtifactHash } from "./canonical";
+import {
+  ArtifactStoreError,
+  publishArtifact,
+  type ArtifactStoreFileSystem,
+} from "./artifact-store";
+
+const testModuleName: string = "vitest";
+const { afterEach, describe, expect, it } = await import(testModuleName) as any;
+
+const temporaryDirectories: string[] = [];
+afterEach(async () => Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true }))));
+
+const hash = (digit: string): string => digit.repeat(64);
+const commit = (digit: string): string => digit.repeat(40);
+const source = (digit: string) => ({
+  repository: "owner/project", repositoryUrl: "https://github.com/owner/project",
+  authorName: "Example Author", authorLogin: "example", authorBasis: "SELECTED_COMMIT",
+  authorSourceUrl: `https://github.com/owner/project/commit/${commit(digit)}`,
+  path: `src/file-${digit}.ts`, blob: commit(digit), rawContentHash: hash(digit),
+  excerptHash: hash(digit === "a" ? "b" : digit), licenseName: "MIT License",
+  licenseSpdx: "MIT", licenseFileUrl: `https://github.com/owner/project/blob/${commit(digit)}/LICENSE`,
+  commit: commit(digit), commitUrl: `https://github.com/owner/project/commit/${commit(digit)}`,
+  blobUrl: `https://github.com/owner/project/blob/${commit(digit)}/src/file-${digit}.ts`,
+  profileVersion: "local-real-rounds.v1", crawlSnapshotId: hash("f"),
+});
+const fixtureBase = (kind: "PROVENANCE" | "LANGUAGE", index: number) => ({
+  kind, roundId: `${kind.toLowerCase()}-${index}`, roundVersion: "1", excerpt: `const value = ${index};`,
+  prompt: "Choose the recorded result.", candidates: [{ id: "one", label: "One" }, { id: "two", label: "Two" }],
+  clues: ["First clue", "Second clue"], correctCandidateId: "one", evidence: "Pinned evidence",
+  explanation: "Recorded explanation", attribution: "owner/project — Example Author — MIT License (MIT) — pinned file",
+  helpfulSignals: ["Pinned record"], misleadingSignals: ["Style"],
+});
+const provenance = (index: number, digit: string) => ({
+  ...fixtureBase("PROVENANCE", index),
+  source: {
+    discoverySource: "GITHUB_COMMIT_SEARCH", ...source(digit), queryId: "copilot-trailer",
+    childCommit: commit(digit), childTree: commit("b"), parentCommit: commit("c"), parentTree: commit("d"),
+    parentPath: `src/file-${digit}.ts`, childPath: `src/file-${digit}.ts`, parentMode: "100644", childMode: "100644",
+    parentBlob: commit("e"), childBlob: commit(digit), parentRawContentHash: hash("e"),
+    childRawContentHash: hash(digit), changedLineHash: hash("9"), markerMatched: index === 1,
+  },
+});
+const language = (index: number, name: "Python" | "TypeScript", digit: string) => ({
+  ...fixtureBase("LANGUAGE", index),
+  source: {
+    discoverySource: "STACK_V2", ...source(digit), stackRelease: "v2.2.0",
+    stackRevision: "e565caa3a78c2423bd374333a472b049eb090e47", configuration: name,
+    stableRowId: hash(digit), swhBlobId: commit(digit), swhContentId: commit(digit),
+    swhDirectoryId: commit("b"), swhSnapshotId: commit("c"),
+    swhRevisionId: commit("d"), stackRepository: "owner/project",
+    stackPath: `src/file-${digit}.ts`, detectedLicenses: ["MIT"], detectedLanguage: name,
+    generated: false, vendor: false, sourceEncoding: "UTF-8", byteLength: 128,
+    visitDate: "2023-09-06T10:44:38.631000Z", revisionDate: "2023-09-05T09:30:00Z",
+    committerDate: "2023-09-05T09:30:00Z",
+  },
+});
+const artifact = () => ({
+  schemaVersion: "local-experiment-artifact.v1", contentClass: "LOCAL_UNREVIEWED_EXPERIMENT",
+  profileHash: hash("1"),
+  crawlSnapshot: {
+    id: hash("f"), profileVersion: "local-real-rounds.v1", profileHash: hash("1"),
+    github: { apiVersion: "2022-11-28", queries: [{
+      id: "copilot-trailer", query: "marker", sort: "committer-date", order: "desc", pages: 3, resultCeiling: 300,
+    }] },
+    stack: { release: "v2.2.0", revision: "e565caa3a78c2423bd374333a472b049eb090e47", configurations: ["Python", "TypeScript"] },
+    acceptedResponseHashes: [hash("2"), hash("3")],
+  },
+  fixtures: [provenance(1, "1"), provenance(2, "2"), provenance(3, "3"), language(1, "Python", "4"), language(2, "TypeScript", "5")],
+});
+
+const makeTarget = async (): Promise<{ directory: string; target: string }> => {
+  const directory = await mkdtemp(join(tmpdir(), "codeguessr-artifact-"));
+  temporaryDirectories.push(directory);
+  const target = join(directory, "local-real-rounds.json");
+  await writeFile(target, "previous-artifact", "utf8");
+  return { directory, target };
+};
+
+const makeMissingTarget = async (): Promise<{ directory: string; target: string }> => {
+  const directory = await mkdtemp(join(tmpdir(), "codeguessr-artifact-"));
+  temporaryDirectories.push(directory);
+  return { directory, target: join(directory, "local-real-rounds.json") };
+};
+
+type FailureStage = "none" | "write" | "fileSync" | "close" | "directoryOpen" | "directorySync" | "directoryClose" | "rename";
+const injectedFileSystem = (stage: FailureStage, events: string[]): ArtifactStoreFileSystem => ({
+  open: async (path, flags, mode) => {
+    events.push(`open:${flags}:${path}`);
+    if (stage === "directoryOpen" && flags === "r") throw new Error("injected directory open");
+    const handle = await open(path, flags, mode);
+    const directoryHandle = flags === "r";
+    let closeFailed = false;
+    let directorySyncs = 0;
+    return {
+      writeFile: async (data) => {
+        events.push("write");
+        if (stage === "write") throw new Error("injected write");
+        await handle.writeFile(data);
+      },
+      sync: async () => {
+        events.push(directoryHandle ? "directorySync" : "fileSync");
+        if (directoryHandle) directorySyncs += 1;
+        if (stage === "directorySync" && directoryHandle && directorySyncs === 2) {
+          throw new Error("injected directory sync");
+        }
+        if (stage === "fileSync" && !directoryHandle) throw new Error("injected sync");
+        await handle.sync();
+      },
+      close: async () => {
+        events.push(directoryHandle ? "directoryClose" : "fileClose");
+        if (stage === "directoryClose" && directoryHandle) {
+          await handle.close();
+          throw new Error("injected directory close");
+        }
+        if (stage === "close" && !directoryHandle && !closeFailed) {
+          closeFailed = true;
+          throw new Error("injected close");
+        }
+        await handle.close();
+      },
+    };
+  },
+  rename: async (from, to) => {
+    events.push("rename");
+    if (stage === "rename") throw new Error("injected rename");
+    await rename(from, to);
+  },
+  link: async (from, to) => {
+    events.push("link");
+    await link(from, to);
+  },
+  unlink,
+});
+
+describe("atomic artifact publication", () => {
+  it("exposes one hash-verifying publisher", async () => {
+    const moduleName: string = "./artifact-store";
+    const storeModule = await import(moduleName).catch(() => ({})) as Record<string, unknown>;
+
+    expect(storeModule.publishArtifact).toBeTypeOf("function");
+  });
+
+  it("writes canonical bytes through an exclusive same-directory file and syncs the directory", async () => {
+    const { directory, target } = await makeTarget();
+    const candidate = artifact();
+    const events: string[] = [];
+
+    const published = await publishArtifact({
+      artifact: candidate,
+      expectedHash: canonicalArtifactHash(candidate),
+      targetPath: target,
+      fileSystem: injectedFileSystem("none", events),
+      uniqueId: () => "11111111-1111-4111-8111-111111111111",
+    });
+
+    expect(published).toEqual({ path: target, hash: canonicalArtifactHash(candidate), bytes: canonicalArtifactBytes(candidate).byteLength });
+    expect(await readFile(target)).toEqual(Buffer.from(canonicalArtifactBytes(candidate)));
+    expect(events).toContain("directorySync");
+    expect(events.findIndex((event) => event.startsWith("open:r:"))).toBeLessThan(events.indexOf("rename"));
+    const tempOpen = events.find((event) => event.startsWith("open:wx:"));
+    expect(tempOpen).toContain(`${dirname(target)}/`);
+    expect(await readdir(directory)).toEqual(["local-real-rounds.json"]);
+    expect(Object.isFrozen(published)).toBe(true);
+  });
+
+  it("preserves old bytes when the directory cannot be opened and treats post-sync close as best effort", async () => {
+    const openFailure = await makeTarget();
+    const candidate = artifact();
+    await expect(publishArtifact({
+      artifact: candidate,
+      expectedHash: canonicalArtifactHash(candidate),
+      targetPath: openFailure.target,
+      fileSystem: injectedFileSystem("directoryOpen", []),
+      uniqueId: () => "11111111-1111-4111-8111-111111111111",
+    })).rejects.toBeInstanceOf(ArtifactStoreError);
+    expect(await readFile(openFailure.target, "utf8")).toBe("previous-artifact");
+
+    const closeFailure = await makeTarget();
+    await expect(publishArtifact({
+      artifact: candidate,
+      expectedHash: canonicalArtifactHash(candidate),
+      targetPath: closeFailure.target,
+      fileSystem: injectedFileSystem("directoryClose", []),
+      uniqueId: () => "11111111-1111-4111-8111-111111111111",
+    })).resolves.toMatchObject({ hash: canonicalArtifactHash(candidate) });
+    expect(await readFile(closeFailure.target)).toEqual(Buffer.from(canonicalArtifactBytes(candidate)));
+
+    const syncFailure = await makeTarget();
+    await expect(publishArtifact({
+      artifact: candidate,
+      expectedHash: canonicalArtifactHash(candidate),
+      targetPath: syncFailure.target,
+      fileSystem: injectedFileSystem("directorySync", []),
+      uniqueId: () => "11111111-1111-4111-8111-111111111111",
+    })).rejects.toBeInstanceOf(ArtifactStoreError);
+    expect(await readFile(syncFailure.target, "utf8")).toBe("previous-artifact");
+    expect(await readdir(syncFailure.directory)).toEqual(["local-real-rounds.json"]);
+
+    const missing = await makeMissingTarget();
+    await expect(publishArtifact({
+      artifact: candidate,
+      expectedHash: canonicalArtifactHash(candidate),
+      targetPath: missing.target,
+      fileSystem: injectedFileSystem("directorySync", []),
+      uniqueId: () => "11111111-1111-4111-8111-111111111111",
+    })).rejects.toBeInstanceOf(ArtifactStoreError);
+    await expect(readFile(missing.target)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readdir(missing.directory)).toEqual([]);
+  });
+
+  it("rejects malformed or hash-mismatched input before touching the previous artifact", async () => {
+    const { directory, target } = await makeTarget();
+
+    await expect(publishArtifact({ artifact: {}, expectedHash: hash("1"), targetPath: target }))
+      .rejects.toBeInstanceOf(ArtifactStoreError);
+    await expect(publishArtifact({ artifact: artifact(), expectedHash: hash("9"), targetPath: target }))
+      .rejects.toBeInstanceOf(ArtifactStoreError);
+
+    expect(await readFile(target, "utf8")).toBe("previous-artifact");
+    expect(await readdir(directory)).toEqual(["local-real-rounds.json"]);
+  });
+
+  it("cleans temporary and backup files while preserving previous bytes on pre-publication failure", async () => {
+    for (const stage of ["write", "fileSync", "close", "rename"] as const) {
+      const { directory, target } = await makeTarget();
+      const candidate = artifact();
+      const events: string[] = [];
+      await expect(publishArtifact({
+        artifact: candidate,
+        expectedHash: canonicalArtifactHash(candidate),
+        targetPath: target,
+        fileSystem: injectedFileSystem(stage, events),
+        uniqueId: () => "11111111-1111-4111-8111-111111111111",
+      })).rejects.toBeInstanceOf(ArtifactStoreError);
+
+      expect(await readFile(target, "utf8")).toBe("previous-artifact");
+      expect(await readdir(directory)).toEqual(["local-real-rounds.json"]);
+      if (stage === "rename") expect(events).toContain("link");
+    }
+  });
+});

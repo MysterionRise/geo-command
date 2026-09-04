@@ -13,6 +13,7 @@
     "test:e2e": "node tests/e2e/run-playwright.mjs",
     "test:performance": "node --test tests/performance/*.test.mjs",
     "acquire:content": "node --import tsx ops/content/acquire/index.ts",
+    "prepare:poc": "node --import tsx ops/poc/prepare/index.ts",
     "typecheck": "pnpm --recursive --if-present typecheck && tsc --noEmit -p ops/tsconfig.json"
   },
   "devDependencies": {
