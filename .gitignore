@@ -8,3 +8,14 @@ test-results/
 .env
 .env.*
 !.env.example
+
+# Local PoC Stack worker state
+ops/poc/stack/.venv/
+ops/poc/stack/.cache/
+ops/poc/stack/.aws/
+ops/poc/stack/.huggingface/
+ops/poc/stack/credentials/
+ops/poc/stack/tmp/
+ops/poc/stack/.tmp/
+ops/poc/stack/**/__pycache__/
+ops/poc/stack/**/*.py[cod]
